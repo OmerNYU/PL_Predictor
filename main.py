@@ -2,7 +2,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from sklearn.preprocessing import LabelEncoder
 from sklearn.model_selection import train_test_split
-
+from sklearn.linear_model import LogisticRegression
 
 df = pd.read_csv('premier-league-matches.csv')
 
@@ -65,3 +65,17 @@ y = df['result_encoded']
 X_train, X_test, y_train, y_test = train_test_split(
     X, y, test_size=0.2, random_state=42
 )
+
+
+#Train Model
+model = LogisticRegression(max_iter=1000)
+model.fit(x_train, y_train)
+
+print("Training complete!")
+
+
+#Predict Outcomes
+
+#decode the predictions
+pred_labels = le_result.inverse_transform(predictions[:10])
+print(pred_labels)
