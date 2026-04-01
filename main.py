@@ -3,6 +3,8 @@ import matplotlib.pyplot as plt
 from sklearn.preprocessing import LabelEncoder
 from sklearn.model_selection import train_test_split
 from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import classification_report, confusion_matrix
+import seaborn as sns
 
 df = pd.read_csv('premier-league-matches.csv')
 
@@ -69,13 +71,27 @@ X_train, X_test, y_train, y_test = train_test_split(
 
 #Train Model
 model = LogisticRegression(max_iter=1000)
-model.fit(x_train, y_train)
+model.fit(X_train, y_train)
 
 print("Training complete!")
 
 
 #Predict Outcomes
+predictions = model.predict(X_test)
 
 #decode the predictions
 pred_labels = le_result.inverse_transform(predictions[:10])
 print(pred_labels)
+
+print(classification_report(y_test, predictions, target_names=le_result.classes_))
+
+cm = confusion_matrix(y_test, predictions)
+sns.heatmap(
+    cm, annot=True, fmt='d',
+    xticklabels=le_result.classes_,
+    yticklabels=le_result.classes_
+)
+plt.title('Confusion Matrix')
+plt.xlabel('Predicted')
+plt.ylabel('Actual')
+plt.show()
