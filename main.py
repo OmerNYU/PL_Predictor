@@ -4,6 +4,7 @@ from sklearn.preprocessing import LabelEncoder
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import classification_report, confusion_matrix
 import seaborn as sns
+import numpy as np
 
 df = pd.read_csv('premier-league-matches.csv')
 
@@ -70,6 +71,34 @@ y = df['result_encoded']
 split_idx = int(len(df) * 0.8)
 X_train, X_test = X.iloc[:split_idx], X.iloc[split_idx:]
 y_train, y_test = y.iloc[:split_idx], y.iloc[split_idx:]
+
+def baseline_always_home_win(n: int, le: LabelEncoder) -> np.ndarray:
+    """Baseline 1: always predict 'Home Win' (simple sanity check)."""
+    home_win_encoded = int(le.transform(['Home Win'])[0])
+    return np.full(shape=n, fill_value=home_win_encoded, dtype=int)
+
+
+def baseline_most_frequent_class(y_train: pd.Series, n: int) -> np.ndarray:
+    """Baseline 2: predict the most frequent training class (majority-class baseline)."""
+    most_frequent = int(y_train.value_counts().idxmax())
+    return np.full(shape=n, fill_value=most_frequent, dtype=int)
+
+
+def baseline_random_by_train_freq(
+    y_train: pd.Series, n: int, *, random_state: int = 42
+) -> np.ndarray:
+    """Baseline 3: random predictions weighted by training class frequencies."""
+    freqs = y_train.value_counts(normalize=True).sort_index()
+    classes = freqs.index.to_numpy(dtype=int)
+    probs = freqs.to_numpy(dtype=float)
+    rng = np.random.default_rng(random_state)
+    return rng.choice(classes, size=n, replace=True, p=probs)
+
+
+# Naive baselines help contextualize model performance on the same (chronological) test set.
+baseline_pred_always_home_win = baseline_always_home_win(len(y_test), le_result)
+baseline_pred_most_frequent = baseline_most_frequent_class(y_train, len(y_test))
+baseline_pred_random_weighted = baseline_random_by_train_freq(y_train, len(y_test))
 
 
 #Train Model
