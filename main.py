@@ -1,7 +1,6 @@
 import pandas as pd
 import matplotlib.pyplot as plt
 from sklearn.preprocessing import LabelEncoder
-from sklearn.model_selection import train_test_split
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import classification_report, confusion_matrix
 import seaborn as sns
@@ -16,7 +15,9 @@ print(df.isnull().sum())  #check for null values
 
 # decode the result column first
 df['result'] = df['FTR'].map({'H': 'Home Win', 'A': 'Away Win', 'D': 'Draw'})
+# Ensure match dates are datetime so ordering is truly chronological.
 df['Date'] = pd.to_datetime(df['Date'])
+# Sort by date before any split to avoid leaking future matches into training.
 df = df.sort_values('Date').reset_index(drop=True)
 
 # build pre-match rolling averages (what we'd actually know before kickoff)
@@ -64,9 +65,11 @@ features = [
 X = df[features]
 y = df['result_encoded']
 
-X_train, X_test, y_train, y_test = train_test_split(
-    X, y, test_size=0.2, random_state=42
-)
+# Time-dependent prediction should respect time order:
+# train on earlier matches (first 80%), test on later matches (last 20%).
+split_idx = int(len(df) * 0.8)
+X_train, X_test = X.iloc[:split_idx], X.iloc[split_idx:]
+y_train, y_test = y.iloc[:split_idx], y.iloc[split_idx:]
 
 
 #Train Model
