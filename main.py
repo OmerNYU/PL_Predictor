@@ -224,21 +224,50 @@ phase1_evals = [
     ),
 ]
 
-comparison = pd.DataFrame(
+# Structured log for Phase 1 experiments (extend with new rows / columns as needed).
+eval_by_model_name = {e["model_name"]: e for e in phase1_evals}
+_phase1_feature_set = ", ".join(features)
+_phase1_split = "chronological_80_20_by_match_date"
+_phase1_experiment_rows = [
+    {
+        "experiment_id": "phase1_01",
+        "model": "Always Home Win",
+        "eval_model_name": "Baseline: always home win",
+        "notes": "Predict Home Win for every test match.",
+    },
+    {
+        "experiment_id": "phase1_02",
+        "model": "Most Frequent Class",
+        "eval_model_name": "Baseline: majority class",
+        "notes": "Predict the majority class from the training set.",
+    },
+    {
+        "experiment_id": "phase1_03",
+        "model": "Class-Frequency Random",
+        "eval_model_name": "Baseline: random (train class frequencies)",
+        "notes": "Random labels sampled from training class frequencies (random_state=42).",
+    },
+    {
+        "experiment_id": "phase1_04",
+        "model": "Logistic Regression",
+        "eval_model_name": "Logistic regression",
+        "notes": "sklearn LogisticRegression; max_iter=1000; default hyperparameters.",
+    },
+]
+experiment_results = pd.DataFrame(
     [
         {
-            "Model": e["model_name"],
-            "Accuracy": e["accuracy"],
-            "Macro F1": e["macro_f1"],
+            "experiment_id": spec["experiment_id"],
+            "model": spec["model"],
+            "features": _phase1_feature_set,
+            "split_method": _phase1_split,
+            "accuracy": eval_by_model_name[spec["eval_model_name"]]["accuracy"],
+            "macro_f1": eval_by_model_name[spec["eval_model_name"]]["macro_f1"],
+            "notes": spec["notes"],
         }
-        for e in phase1_evals
+        for spec in _phase1_experiment_rows
     ]
 )
-print(f"\n{'=' * 72}")
-print("Phase 1 evaluation — chronological test set (same setup for all methods)")
-print(f"{'=' * 72}")
-print(comparison.to_string(index=False, float_format=lambda x: f"{x:.4f}"))
-
 print(f"\n{'—' * 72}")
 print("Confusion matrices (same label order as above)")
 print(f"{'—' * 72}")
@@ -246,6 +275,21 @@ for e in phase1_evals:
     print_confusion_matrix_compact(
         e["model_name"], e["confusion_matrix"], target_names=class_names
     )
+
+print(f"\n{'=' * 72}")
+print("Phase 1 — experiment results (same chronological test set for all rows)")
+print(f"{'=' * 72}")
+with pd.option_context("display.max_colwidth", None):
+    print(
+        experiment_results.to_string(
+            index=False,
+            formatters={
+                "accuracy": lambda x: f"{x:.4f}",
+                "macro_f1": lambda x: f"{x:.4f}",
+            },
+        )
+    )
+
 
 lr_eval = phase1_evals[0]
 cm = lr_eval["confusion_matrix"]
