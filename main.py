@@ -9,20 +9,20 @@ import numpy as np
 
 df = pd.read_csv('premier-league-matches.csv')
 
-print(df.shape)    #how many rows and columns are there
-print(df.head())   #first 5 rows of the dataframe
-print(df.dtypes)   #data types of the columns
-print(df.isnull().sum())  #check for null values
+print("Data quality (raw CSV)")
+print(f"Shape: {df.shape}")
+_nulls = df.isnull().sum()
+if _nulls.sum() == 0:
+    print("Missing values: none")
+else:
+    print("Missing values (count per column):")
+    print(_nulls[_nulls > 0].to_string())
 
-
-# decode the result column first
 df['result'] = df['FTR'].map({'H': 'Home Win', 'A': 'Away Win', 'D': 'Draw'})
-# Ensure match dates are datetime so ordering is truly chronological.
 df['Date'] = pd.to_datetime(df['Date'])
-# Sort by date before any split to avoid leaking future matches into training.
 df = df.sort_values('Date').reset_index(drop=True)
 
-# build pre-match rolling averages (what we'd actually know before kickoff)
+# Prematch features: shift(1) before rolling so each row uses only past matches.
 df['home_goals_avg'] = df.groupby('Home')['HomeGoals'].transform(
     lambda x: x.shift(1).rolling(5, min_periods=1).mean()
 )
@@ -37,6 +37,16 @@ df['away_conceded_avg'] = df.groupby('Away')['HomeGoals'].transform(
 )
 df = df.dropna()
 
+print("\nModeling cohort (after rolling features and complete cases)")
+print(
+    f"Match dates: {df['Date'].min().date()} — {df['Date'].max().date()} "
+    f"({len(df)} matches)"
+)
+print("Outcome distribution:")
+print(df['result'].value_counts())
+print("Outcome proportions:")
+print(df['result'].value_counts(normalize=True).round(3))
+
 le_home = LabelEncoder()
 le_away = LabelEncoder()
 le_result = LabelEncoder()
@@ -44,19 +54,6 @@ le_result = LabelEncoder()
 df['home_encoded'] = le_home.fit_transform(df['Home'])
 df['away_encoded'] = le_away.fit_transform(df['Away'])
 df['result_encoded'] = le_result.fit_transform(df['result'])
-
-print(df['result'].value_counts())
-print(df['result'].value_counts(normalize=True).round(3))
-
-# quick correlation check
-print(df.corr(numeric_only=True)['result_encoded'].sort_values())
-
-
-#visualize the correlation
-
-df['HomeGoals'].hist(bins=10)
-plt.title('Home Goals Distribution')
-plt.show()
 
 features = [
     'home_encoded', 'away_encoded',
@@ -67,11 +64,19 @@ features = [
 X = df[features]
 y = df['result_encoded']
 
-# Time-dependent prediction should respect time order:
-# train on earlier matches (first 80%), test on later matches (last 20%).
+# Chronological holdout: train on past, test on future (no random shuffle).
 split_idx = int(len(df) * 0.8)
 X_train, X_test = X.iloc[:split_idx], X.iloc[split_idx:]
 y_train, y_test = y.iloc[:split_idx], y.iloc[split_idx:]
+n_train, n_test = len(X_train), len(X_test)
+train_end = df['Date'].iloc[split_idx - 1]
+test_start = df['Date'].iloc[split_idx]
+print(
+    f"\nChronological split: train n={n_train}, test n={n_test} "
+    f"(rows ordered by `Date`; last train date {train_end.date()}, "
+    f"first test date {test_start.date()}). "
+    "All metrics below use the test slice only."
+)
 
 
 def evaluate_predictions(
@@ -172,24 +177,15 @@ def baseline_random_by_train_freq(
     return rng.choice(classes, size=n, replace=True, p=probs)
 
 
-# Naive baselines help contextualize model performance on the same (chronological) test set.
+# Naive baselines on the same held-out test window as the classifier.
 baseline_pred_always_home_win = baseline_always_home_win(len(y_test), le_result)
 baseline_pred_most_frequent = baseline_most_frequent_class(y_train, len(y_test))
 baseline_pred_random_weighted = baseline_random_by_train_freq(y_train, len(y_test))
 
 
-#Train Model
 model = LogisticRegression(max_iter=1000)
 model.fit(X_train, y_train)
-
-print("Training complete!")
-
-
-# Predict outcomes
 predictions = model.predict(X_test)
-
-pred_labels = le_result.inverse_transform(predictions[:10])
-print("Sample predicted labels:", pred_labels)
 
 class_names = list(le_result.classes_)
 
@@ -269,7 +265,7 @@ experiment_results = pd.DataFrame(
     ]
 )
 print(f"\n{'—' * 72}")
-print("Confusion matrices (same label order as above)")
+print("Confusion matrices — held-out test set (rows = actual, cols = predicted)")
 print(f"{'—' * 72}")
 for e in phase1_evals:
     print_confusion_matrix_compact(
@@ -277,7 +273,7 @@ for e in phase1_evals:
     )
 
 print(f"\n{'=' * 72}")
-print("Phase 1 — experiment results (same chronological test set for all rows)")
+print("Phase 1 — baselines vs logistic regression (same chronological test set)")
 print(f"{'=' * 72}")
 with pd.option_context("display.max_colwidth", None):
     print(
