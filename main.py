@@ -2,7 +2,8 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from sklearn.preprocessing import LabelEncoder
 from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import classification_report, confusion_matrix
+from sklearn.metrics import accuracy_score, confusion_matrix, f1_score
+from typing import Optional, Sequence
 import seaborn as sns
 import numpy as np
 
@@ -72,6 +73,61 @@ split_idx = int(len(df) * 0.8)
 X_train, X_test = X.iloc[:split_idx], X.iloc[split_idx:]
 y_train, y_test = y.iloc[:split_idx], y.iloc[split_idx:]
 
+
+def evaluate_predictions(
+    model_name: str,
+    y_true,
+    y_pred,
+    *,
+    target_names: Optional[Sequence[str]] = None,
+) -> dict:
+    """
+    Shared metrics for any classifier: accuracy, macro F1, confusion matrix.
+
+    y_true and y_pred should be aligned (same length) and use the same label encoding.
+    Pass target_names (e.g. le.classes_) for readable confusion-matrix headers in the printed summary.
+    """
+    y_true = np.asarray(y_true).ravel()
+    y_pred = np.asarray(y_pred).ravel()
+
+    if target_names is not None:
+        labels = np.arange(len(target_names), dtype=int)
+    else:
+        labels = np.sort(np.unique(np.concatenate([y_true, y_pred])))
+
+    accuracy = accuracy_score(y_true, y_pred)
+    macro_f1 = f1_score(
+        y_true, y_pred, average="macro", labels=labels, zero_division=0
+    )
+    cm = confusion_matrix(y_true, y_pred, labels=labels)
+
+    name_for = (
+        {i: target_names[i] for i in range(len(target_names))}
+        if target_names is not None
+        else {lab: str(lab) for lab in labels}
+    )
+
+    print(f"\n{'=' * 60}")
+    print(f"Model: {model_name}")
+    print(f"{'=' * 60}")
+    print(f"Accuracy:   {accuracy:.4f}")
+    print(f"Macro F1:   {macro_f1:.4f}")
+    print("Confusion matrix (rows = actual, columns = predicted):")
+    col_hdr = "".join(f"{name_for[int(l)]:>14}" for l in labels)
+    print(f"{'':>12}{col_hdr}")
+    for i, row_label in enumerate(labels):
+        row_parts = "".join(f"{cm[i, j]:>14}" for j in range(len(labels)))
+        print(f"{name_for[int(row_label)]:>12}{row_parts}")
+
+    return {
+        "model_name": model_name,
+        "accuracy": float(accuracy),
+        "macro_f1": float(macro_f1),
+        "confusion_matrix": cm,
+        "labels": labels,
+    }
+
+
 def baseline_always_home_win(n: int, le: LabelEncoder) -> np.ndarray:
     """Baseline 1: always predict 'Home Win' (simple sanity check)."""
     home_win_encoded = int(le.transform(['Home Win'])[0])
@@ -108,22 +164,42 @@ model.fit(X_train, y_train)
 print("Training complete!")
 
 
-#Predict Outcomes
+# Predict outcomes
 predictions = model.predict(X_test)
 
-#decode the predictions
 pred_labels = le_result.inverse_transform(predictions[:10])
-print(pred_labels)
+print("Sample predicted labels:", pred_labels)
 
-print(classification_report(y_test, predictions, target_names=le_result.classes_))
+class_names = list(le_result.classes_)
 
-cm = confusion_matrix(y_test, predictions)
-sns.heatmap(
-    cm, annot=True, fmt='d',
-    xticklabels=le_result.classes_,
-    yticklabels=le_result.classes_
+lr_eval = evaluate_predictions(
+    "Logistic regression", y_test, predictions, target_names=class_names
 )
-plt.title('Confusion Matrix')
-plt.xlabel('Predicted')
-plt.ylabel('Actual')
+evaluate_predictions(
+    "Baseline: always home win",
+    y_test,
+    baseline_pred_always_home_win,
+    target_names=class_names,
+)
+evaluate_predictions(
+    "Baseline: majority class",
+    y_test,
+    baseline_pred_most_frequent,
+    target_names=class_names,
+)
+evaluate_predictions(
+    "Baseline: random (train class frequencies)",
+    y_test,
+    baseline_pred_random_weighted,
+    target_names=class_names,
+)
+cm = lr_eval["confusion_matrix"]
+sns.heatmap(
+    cm, annot=True, fmt="d",
+    xticklabels=class_names,
+    yticklabels=class_names,
+)
+plt.title("Confusion Matrix — Logistic regression")
+plt.xlabel("Predicted")
+plt.ylabel("Actual")
 plt.show()
