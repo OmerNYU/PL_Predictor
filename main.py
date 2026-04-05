@@ -80,12 +80,14 @@ def evaluate_predictions(
     y_pred,
     *,
     target_names: Optional[Sequence[str]] = None,
+    print_report: bool = True,
 ) -> dict:
     """
     Shared metrics for any classifier: accuracy, macro F1, confusion matrix.
 
     y_true and y_pred should be aligned (same length) and use the same label encoding.
     Pass target_names (e.g. le.classes_) for readable confusion-matrix headers in the printed summary.
+    Set print_report=False to only compute metrics (e.g. for side-by-side comparison tables).
     """
     y_true = np.asarray(y_true).ravel()
     y_pred = np.asarray(y_pred).ravel()
@@ -107,17 +109,18 @@ def evaluate_predictions(
         else {lab: str(lab) for lab in labels}
     )
 
-    print(f"\n{'=' * 60}")
-    print(f"Model: {model_name}")
-    print(f"{'=' * 60}")
-    print(f"Accuracy:   {accuracy:.4f}")
-    print(f"Macro F1:   {macro_f1:.4f}")
-    print("Confusion matrix (rows = actual, columns = predicted):")
-    col_hdr = "".join(f"{name_for[int(l)]:>14}" for l in labels)
-    print(f"{'':>12}{col_hdr}")
-    for i, row_label in enumerate(labels):
-        row_parts = "".join(f"{cm[i, j]:>14}" for j in range(len(labels)))
-        print(f"{name_for[int(row_label)]:>12}{row_parts}")
+    if print_report:
+        print(f"\n{'=' * 60}")
+        print(f"Model: {model_name}")
+        print(f"{'=' * 60}")
+        print(f"Accuracy:   {accuracy:.4f}")
+        print(f"Macro F1:   {macro_f1:.4f}")
+        print("Confusion matrix (rows = actual, columns = predicted):")
+        col_hdr = "".join(f"{name_for[int(l)]:>14}" for l in labels)
+        print(f"{'':>12}{col_hdr}")
+        for i, row_label in enumerate(labels):
+            row_parts = "".join(f"{cm[i, j]:>14}" for j in range(len(labels)))
+            print(f"{name_for[int(row_label)]:>12}{row_parts}")
 
     return {
         "model_name": model_name,
@@ -126,6 +129,24 @@ def evaluate_predictions(
         "confusion_matrix": cm,
         "labels": labels,
     }
+
+
+def print_confusion_matrix_compact(
+    model_name: str,
+    cm: np.ndarray,
+    *,
+    target_names: Sequence[str],
+) -> None:
+    """Text confusion matrix with a short header (no metric banners)."""
+    labels = np.arange(len(target_names), dtype=int)
+    name_for = {i: target_names[i] for i in range(len(target_names))}
+    print(f"\n{model_name}")
+    print("  Confusion matrix (rows = actual, columns = predicted):")
+    col_hdr = "".join(f"{name_for[int(l)]:>14}" for l in labels)
+    print(f"  {'':>10}{col_hdr}")
+    for i, row_label in enumerate(labels):
+        row_parts = "".join(f"{cm[i, j]:>14}" for j in range(len(labels)))
+        print(f"  {name_for[int(row_label)]:>10}{row_parts}")
 
 
 def baseline_always_home_win(n: int, le: LabelEncoder) -> np.ndarray:
@@ -172,27 +193,61 @@ print("Sample predicted labels:", pred_labels)
 
 class_names = list(le_result.classes_)
 
-lr_eval = evaluate_predictions(
-    "Logistic regression", y_test, predictions, target_names=class_names
+phase1_evals = [
+    evaluate_predictions(
+        "Logistic regression",
+        y_test,
+        predictions,
+        target_names=class_names,
+        print_report=False,
+    ),
+    evaluate_predictions(
+        "Baseline: always home win",
+        y_test,
+        baseline_pred_always_home_win,
+        target_names=class_names,
+        print_report=False,
+    ),
+    evaluate_predictions(
+        "Baseline: majority class",
+        y_test,
+        baseline_pred_most_frequent,
+        target_names=class_names,
+        print_report=False,
+    ),
+    evaluate_predictions(
+        "Baseline: random (train class frequencies)",
+        y_test,
+        baseline_pred_random_weighted,
+        target_names=class_names,
+        print_report=False,
+    ),
+]
+
+comparison = pd.DataFrame(
+    [
+        {
+            "Model": e["model_name"],
+            "Accuracy": e["accuracy"],
+            "Macro F1": e["macro_f1"],
+        }
+        for e in phase1_evals
+    ]
 )
-evaluate_predictions(
-    "Baseline: always home win",
-    y_test,
-    baseline_pred_always_home_win,
-    target_names=class_names,
-)
-evaluate_predictions(
-    "Baseline: majority class",
-    y_test,
-    baseline_pred_most_frequent,
-    target_names=class_names,
-)
-evaluate_predictions(
-    "Baseline: random (train class frequencies)",
-    y_test,
-    baseline_pred_random_weighted,
-    target_names=class_names,
-)
+print(f"\n{'=' * 72}")
+print("Phase 1 evaluation — chronological test set (same setup for all methods)")
+print(f"{'=' * 72}")
+print(comparison.to_string(index=False, float_format=lambda x: f"{x:.4f}"))
+
+print(f"\n{'—' * 72}")
+print("Confusion matrices (same label order as above)")
+print(f"{'—' * 72}")
+for e in phase1_evals:
+    print_confusion_matrix_compact(
+        e["model_name"], e["confusion_matrix"], target_names=class_names
+    )
+
+lr_eval = phase1_evals[0]
 cm = lr_eval["confusion_matrix"]
 sns.heatmap(
     cm, annot=True, fmt="d",
