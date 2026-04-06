@@ -99,6 +99,12 @@ df["home_team_points_avg_overall"] = _overall_wide["points_avg_overall"]["home"]
 df["away_team_points_avg_overall"] = _overall_wide["points_avg_overall"]["away"]
 df["home_team_goal_diff_avg_overall"] = _overall_wide["goal_diff_avg_overall"]["home"]
 df["away_team_goal_diff_avg_overall"] = _overall_wide["goal_diff_avg_overall"]["away"]
+df["points_avg_overall_diff"] = (
+    df["home_team_points_avg_overall"] - df["away_team_points_avg_overall"]
+)
+df["goal_diff_avg_overall_diff"] = (
+    df["home_team_goal_diff_avg_overall"] - df["away_team_goal_diff_avg_overall"]
+)
 
 df = df.dropna()
 
@@ -149,9 +155,14 @@ features_overall = features_core + [
     "home_team_goal_diff_avg_overall",
     "away_team_goal_diff_avg_overall",
 ]
+features_overall_diff = features_overall + [
+    "points_avg_overall_diff",
+    "goal_diff_avg_overall_diff",
+]
 for _feat_set_name, _feat_set in (
     ("venue form (10)", features),
     ("overall form (10)", features_overall),
+    ("overall form + matchup diff (12)", features_overall_diff),
 ):
     _overlap = _OUTCOME_LEAKAGE_COLS.intersection(_feat_set)
     if _overlap:
@@ -163,6 +174,7 @@ for _feat_set_name, _feat_set in (
 X = df[features]
 X_core = df[features_core]
 X_overall = df[features_overall]
+X_overall_diff = df[features_overall_diff]
 y = df["result_encoded"]
 
 split_idx = int(len(df) * 0.8)
@@ -192,9 +204,21 @@ print(
     "(shift(1).rolling(5) on team chronological appearance stream)."
 )
 
+print("\nPhase 1 — model features (logistic regression, overall + matchup differences)")
+print("  Prematch only; includes venue-agnostic home-away difference features.")
+for _i, _name in enumerate(features_overall_diff, start=1):
+    print(f"  {_i}. {_name}")
+print(
+    "  *_diff features are home minus away values derived from overall prematch rollings."
+)
+
 X_train, X_test = X.iloc[:split_idx], X.iloc[split_idx:]
 X_train_core, X_test_core = X_core.iloc[:split_idx], X_core.iloc[split_idx:]
 X_train_overall, X_test_overall = X_overall.iloc[:split_idx], X_overall.iloc[split_idx:]
+X_train_overall_diff, X_test_overall_diff = (
+    X_overall_diff.iloc[:split_idx],
+    X_overall_diff.iloc[split_idx:],
+)
 y_train, y_test = y.iloc[:split_idx], y.iloc[split_idx:]
 
 
@@ -314,6 +338,10 @@ model_lr_overall = LogisticRegression(max_iter=1000)
 model_lr_overall.fit(X_train_overall, y_train)
 predictions_overall = model_lr_overall.predict(X_test_overall)
 
+model_lr_overall_diff = LogisticRegression(max_iter=1000)
+model_lr_overall_diff.fit(X_train_overall_diff, y_train)
+predictions_overall_diff = model_lr_overall_diff.predict(X_test_overall_diff)
+
 class_names = list(le_result.classes_)
 
 phase1_evals = [
@@ -359,6 +387,13 @@ phase1_evals = [
         target_names=class_names,
         print_report=False,
     ),
+    evaluate_predictions(
+        "Logistic regression (overall form + matchup diff)",
+        y_test,
+        predictions_overall_diff,
+        target_names=class_names,
+        print_report=False,
+    ),
 ]
 
 # Phase 1 experiment manifest (add rows for new runs).
@@ -366,6 +401,7 @@ eval_by_model_name = {e["model_name"]: e for e in phase1_evals}
 _phase1_feature_set_core = ", ".join(features_core)
 _phase1_feature_set_full = ", ".join(features)
 _phase1_feature_set_overall = ", ".join(features_overall)
+_phase1_feature_set_overall_diff = ", ".join(features_overall_diff)
 _phase1_split = "chronological_80_20_by_match_date"
 _phase1_experiment_rows = [
     {
@@ -417,6 +453,16 @@ _phase1_experiment_rows = [
             "(prior up to 5 matches in all venues per team, shift(1)); same LR defaults as phase1_04."
         ),
     },
+    {
+        "experiment_id": "phase1_07",
+        "model": "Logistic Regression (overall form + matchup diff)",
+        "eval_model_name": "Logistic regression (overall form + matchup diff)",
+        "features": _phase1_feature_set_overall_diff,
+        "notes": (
+            "Adds points_avg_overall_diff and goal_diff_avg_overall_diff (home minus away) "
+            "on top of the phase1_06 overall-form features; same LR defaults as phase1_04."
+        ),
+    },
 ]
 experiment_results = pd.DataFrame(
     [
@@ -455,8 +501,13 @@ for e in phase1_evals:
     )
 
 
-lr_form_eval = eval_by_model_name["Logistic regression (rolling form)"]
-cm = lr_form_eval["confusion_matrix"]
+_logistic_evals = [
+    e for e in phase1_evals if e["model_name"].startswith("Logistic regression")
+]
+best_logistic_eval = max(
+    _logistic_evals, key=lambda e: (e["accuracy"], e["macro_f1"])
+)
+cm = best_logistic_eval["confusion_matrix"]
 sns.heatmap(
     cm,
     annot=True,
@@ -464,7 +515,7 @@ sns.heatmap(
     xticklabels=class_names,
     yticklabels=class_names,
 )
-plt.title("Confusion Matrix — Logistic regression (rolling form)")
+plt.title(f"Confusion Matrix — {best_logistic_eval['model_name']}")
 plt.xlabel("Predicted")
 plt.ylabel("Actual")
 plt.show()
