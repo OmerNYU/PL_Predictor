@@ -22,7 +22,13 @@ df['result'] = df['FTR'].map({'H': 'Home Win', 'A': 'Away Win', 'D': 'Draw'})
 df['Date'] = pd.to_datetime(df['Date'])
 df = df.sort_values('Date').reset_index(drop=True)
 
-# Prematch features: shift(1) before rolling so each row uses only past matches.
+# Same-fixture outcome information — never pass these (or direct derivatives) as model inputs.
+_OUTCOME_LEAKAGE_COLS = frozenset(
+    {"HomeGoals", "AwayGoals", "FTR", "result", "result_encoded"}
+)
+
+# Pre-match rolling stats: shift(1) within team×venue stream so the current row's
+# goals are excluded; window is prior matches only (min_periods=1 until history exists).
 df['home_goals_avg'] = df.groupby('Home')['HomeGoals'].transform(
     lambda x: x.shift(1).rolling(5, min_periods=1).mean()
 )
@@ -55,14 +61,33 @@ df['home_encoded'] = le_home.fit_transform(df['Home'])
 df['away_encoded'] = le_away.fit_transform(df['Away'])
 df['result_encoded'] = le_result.fit_transform(df['result'])
 
+# Pre-match only: fixture identity + historical form (no same-match scores or result).
 features = [
-    'home_encoded', 'away_encoded',
-    'home_goals_avg', 'away_goals_avg',
-    'home_conceded_avg', 'away_conceded_avg'
+    "home_encoded",
+    "away_encoded",
+    "home_goals_avg",
+    "away_goals_avg",
+    "home_conceded_avg",
+    "away_conceded_avg",
 ]
+_overlap = _OUTCOME_LEAKAGE_COLS.intersection(features)
+if _overlap:
+    raise ValueError(
+        "Target leakage: these columns must not be model inputs: "
+        + ", ".join(sorted(_overlap))
+    )
 
 X = df[features]
-y = df['result_encoded']
+y = df["result_encoded"]
+
+print("\nFinal model features (pre-match only; excludes current-match goals and result):")
+for _i, _name in enumerate(features, start=1):
+    print(f"  {_i}. {_name}")
+print(
+    "Provenance: home_encoded / away_encoded from scheduled teams; "
+    "rolling *_avg columns = mean over the previous up-to-5 same-role fixtures per team "
+    "(home_* from past home games, away_* from past away games), via shift(1).rolling(5)."
+)
 
 # Chronological holdout: train on past, test on future (no random shuffle).
 split_idx = int(len(df) * 0.8)
