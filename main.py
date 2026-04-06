@@ -7,28 +7,20 @@ from typing import Optional, Sequence
 import seaborn as sns
 import numpy as np
 
-df = pd.read_csv('premier-league-matches.csv')
+df = pd.read_csv("premier-league-matches.csv")
+_n_rows_loaded = len(df)
+_raw_nulls = df.isnull().sum()
 
-print("Data quality (raw CSV)")
-print(f"Shape: {df.shape}")
-_nulls = df.isnull().sum()
-if _nulls.sum() == 0:
-    print("Missing values: none")
-else:
-    print("Missing values (count per column):")
-    print(_nulls[_nulls > 0].to_string())
+df["result"] = df["FTR"].map({"H": "Home Win", "A": "Away Win", "D": "Draw"})
+df["Date"] = pd.to_datetime(df["Date"])
+df = df.sort_values("Date").reset_index(drop=True)
 
-df['result'] = df['FTR'].map({'H': 'Home Win', 'A': 'Away Win', 'D': 'Draw'})
-df['Date'] = pd.to_datetime(df['Date'])
-df = df.sort_values('Date').reset_index(drop=True)
-
-# Same-fixture outcome information — never pass these (or direct derivatives) as model inputs.
+# Never use these (or direct derivatives) as model inputs — same-fixture outcome.
 _OUTCOME_LEAKAGE_COLS = frozenset(
     {"HomeGoals", "AwayGoals", "FTR", "result", "result_encoded"}
 )
 
-# Pre-match rolling stats: shift(1) within team×venue stream so the current row's
-# goals are excluded; window is prior matches only (min_periods=1 until history exists).
+# Rolling prematch stats: shift(1) within team stream excludes the current fixture.
 df['home_goals_avg'] = df.groupby('Home')['HomeGoals'].transform(
     lambda x: x.shift(1).rolling(5, min_periods=1).mean()
 )
@@ -43,15 +35,24 @@ df['away_conceded_avg'] = df.groupby('Away')['HomeGoals'].transform(
 )
 df = df.dropna()
 
-print("\nModeling cohort (after rolling features and complete cases)")
+print("\nPhase 1 — dataset")
+print(f"  Rows loaded from CSV:     {_n_rows_loaded}")
+print(f"  Rows in modeling cohort:  {len(df)}  (after rolling features and complete cases)")
 print(
-    f"Match dates: {df['Date'].min().date()} — {df['Date'].max().date()} "
-    f"({len(df)} matches)"
+    f"  Cohort date span:         {df['Date'].min().date()} — {df['Date'].max().date()}"
 )
-print("Outcome distribution:")
-print(df['result'].value_counts())
-print("Outcome proportions:")
-print(df['result'].value_counts(normalize=True).round(3))
+if _raw_nulls.sum() > 0:
+    print("  Missing values in raw CSV (by column):")
+    print(_raw_nulls[_raw_nulls > 0].to_string(header=False))
+
+_class_vc = df["result"].value_counts()
+_class_prop = df["result"].value_counts(normalize=True)
+_class_summary = pd.DataFrame(
+    {"count": _class_vc, "proportion": _class_prop.round(4)}
+).sort_values("count", ascending=False)
+_class_summary.index.name = None
+print("\nPhase 1 — class distribution (modeling cohort)")
+print(_class_summary.to_string())
 
 le_home = LabelEncoder()
 le_away = LabelEncoder()
@@ -61,7 +62,6 @@ df['home_encoded'] = le_home.fit_transform(df['Home'])
 df['away_encoded'] = le_away.fit_transform(df['Away'])
 df['result_encoded'] = le_result.fit_transform(df['result'])
 
-# Pre-match only: fixture identity + historical form (no same-match scores or result).
 features = [
     "home_encoded",
     "away_encoded",
@@ -80,28 +80,26 @@ if _overlap:
 X = df[features]
 y = df["result_encoded"]
 
-print("\nFinal model features (pre-match only; excludes current-match goals and result):")
+split_idx = int(len(df) * 0.8)
+n_train, n_test = split_idx, len(df) - split_idx
+_train_dates = df["Date"].iloc[:split_idx]
+_test_dates = df["Date"].iloc[split_idx:]
+
+print("\nPhase 1 — chronological split (rows ordered by Date; no shuffle)")
+print("  Policy: first 80% of rows → train, remainder → test.")
+print(f"  Train rows: {n_train}    date range: {_train_dates.min().date()} — {_train_dates.max().date()}")
+print(f"  Test rows:  {n_test}    date range: {_test_dates.min().date()} — {_test_dates.max().date()}")
+print("  All reported metrics below use the test slice only.")
+
+print("\nPhase 1 — model features (prematch only; no same-match scores or result)")
 for _i, _name in enumerate(features, start=1):
     print(f"  {_i}. {_name}")
 print(
-    "Provenance: home_encoded / away_encoded from scheduled teams; "
-    "rolling *_avg columns = mean over the previous up-to-5 same-role fixtures per team "
-    "(home_* from past home games, away_* from past away games), via shift(1).rolling(5)."
+    "  Rolling *_avg: prior up-to-5 same-role matches per team (shift(1).rolling(5))."
 )
 
-# Chronological holdout: train on past, test on future (no random shuffle).
-split_idx = int(len(df) * 0.8)
 X_train, X_test = X.iloc[:split_idx], X.iloc[split_idx:]
 y_train, y_test = y.iloc[:split_idx], y.iloc[split_idx:]
-n_train, n_test = len(X_train), len(X_test)
-train_end = df['Date'].iloc[split_idx - 1]
-test_start = df['Date'].iloc[split_idx]
-print(
-    f"\nChronological split: train n={n_train}, test n={n_test} "
-    f"(rows ordered by `Date`; last train date {train_end.date()}, "
-    f"first test date {test_start.date()}). "
-    "All metrics below use the test slice only."
-)
 
 
 def evaluate_predictions(
@@ -180,13 +178,13 @@ def print_confusion_matrix_compact(
 
 
 def baseline_always_home_win(n: int, le: LabelEncoder) -> np.ndarray:
-    """Baseline 1: always predict 'Home Win' (simple sanity check)."""
+    """Always predict home win."""
     home_win_encoded = int(le.transform(['Home Win'])[0])
     return np.full(shape=n, fill_value=home_win_encoded, dtype=int)
 
 
 def baseline_most_frequent_class(y_train: pd.Series, n: int) -> np.ndarray:
-    """Baseline 2: predict the most frequent training class (majority-class baseline)."""
+    """Majority class from the training labels."""
     most_frequent = int(y_train.value_counts().idxmax())
     return np.full(shape=n, fill_value=most_frequent, dtype=int)
 
@@ -194,7 +192,7 @@ def baseline_most_frequent_class(y_train: pd.Series, n: int) -> np.ndarray:
 def baseline_random_by_train_freq(
     y_train: pd.Series, n: int, *, random_state: int = 42
 ) -> np.ndarray:
-    """Baseline 3: random predictions weighted by training class frequencies."""
+    """Random labels with training class frequencies."""
     freqs = y_train.value_counts(normalize=True).sort_index()
     classes = freqs.index.to_numpy(dtype=int)
     probs = freqs.to_numpy(dtype=float)
@@ -202,7 +200,7 @@ def baseline_random_by_train_freq(
     return rng.choice(classes, size=n, replace=True, p=probs)
 
 
-# Naive baselines on the same held-out test window as the classifier.
+# Same test window as the classifier.
 baseline_pred_always_home_win = baseline_always_home_win(len(y_test), le_result)
 baseline_pred_most_frequent = baseline_most_frequent_class(y_train, len(y_test))
 baseline_pred_random_weighted = baseline_random_by_train_freq(y_train, len(y_test))
@@ -245,7 +243,7 @@ phase1_evals = [
     ),
 ]
 
-# Structured log for Phase 1 experiments (extend with new rows / columns as needed).
+# Phase 1 experiment manifest (add rows for new runs).
 eval_by_model_name = {e["model_name"]: e for e in phase1_evals}
 _phase1_feature_set = ", ".join(features)
 _phase1_split = "chronological_80_20_by_match_date"
@@ -289,16 +287,8 @@ experiment_results = pd.DataFrame(
         for spec in _phase1_experiment_rows
     ]
 )
-print(f"\n{'—' * 72}")
-print("Confusion matrices — held-out test set (rows = actual, cols = predicted)")
-print(f"{'—' * 72}")
-for e in phase1_evals:
-    print_confusion_matrix_compact(
-        e["model_name"], e["confusion_matrix"], target_names=class_names
-    )
-
 print(f"\n{'=' * 72}")
-print("Phase 1 — baselines vs logistic regression (same chronological test set)")
+print("Phase 1 — evaluation summary (held-out test set)")
 print(f"{'=' * 72}")
 with pd.option_context("display.max_colwidth", None):
     print(
@@ -309,6 +299,14 @@ with pd.option_context("display.max_colwidth", None):
                 "macro_f1": lambda x: f"{x:.4f}",
             },
         )
+    )
+
+print(f"\n{'—' * 72}")
+print("Phase 1 — confusion matrices (test set; rows = actual, cols = predicted)")
+print(f"{'—' * 72}")
+for e in phase1_evals:
+    print_confusion_matrix_compact(
+        e["model_name"], e["confusion_matrix"], target_names=class_names
     )
 
 
