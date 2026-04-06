@@ -17,20 +17,48 @@ df = df.sort_values("Date").reset_index(drop=True)
 
 # Never use these (or direct derivatives) as model inputs — same-fixture outcome.
 _OUTCOME_LEAKAGE_COLS = frozenset(
-    {"HomeGoals", "AwayGoals", "FTR", "result", "result_encoded"}
+    {
+        "HomeGoals",
+        "AwayGoals",
+        "FTR",
+        "result",
+        "result_encoded",
+        "home_points",
+        "away_points",
+        "home_goal_diff",
+        "away_goal_diff",
+    }
 )
 
-# Rolling prematch stats: shift(1) within team stream excludes the current fixture.
-df['home_goals_avg'] = df.groupby('Home')['HomeGoals'].transform(
+# Per-row helpers (outcome-based); only shifted rolling means below enter the model.
+df["home_points"] = df["FTR"].map({"H": 3, "D": 1, "A": 0})
+df["away_points"] = df["FTR"].map({"A": 3, "D": 1, "H": 0})
+df["home_goal_diff"] = df["HomeGoals"] - df["AwayGoals"]
+df["away_goal_diff"] = df["AwayGoals"] - df["HomeGoals"]
+
+# Rolling prematch stats: shift(1) within team×role stream excludes the current fixture.
+df["home_goals_avg"] = df.groupby("Home")["HomeGoals"].transform(
     lambda x: x.shift(1).rolling(5, min_periods=1).mean()
 )
-df['away_goals_avg'] = df.groupby('Away')['AwayGoals'].transform(
+df["away_goals_avg"] = df.groupby("Away")["AwayGoals"].transform(
     lambda x: x.shift(1).rolling(5, min_periods=1).mean()
 )
-df['home_conceded_avg'] = df.groupby('Home')['AwayGoals'].transform(
+df["home_conceded_avg"] = df.groupby("Home")["AwayGoals"].transform(
     lambda x: x.shift(1).rolling(5, min_periods=1).mean()
 )
-df['away_conceded_avg'] = df.groupby('Away')['HomeGoals'].transform(
+df["away_conceded_avg"] = df.groupby("Away")["HomeGoals"].transform(
+    lambda x: x.shift(1).rolling(5, min_periods=1).mean()
+)
+df["home_points_avg"] = df.groupby("Home")["home_points"].transform(
+    lambda x: x.shift(1).rolling(5, min_periods=1).mean()
+)
+df["away_points_avg"] = df.groupby("Away")["away_points"].transform(
+    lambda x: x.shift(1).rolling(5, min_periods=1).mean()
+)
+df["home_goal_diff_avg"] = df.groupby("Home")["home_goal_diff"].transform(
+    lambda x: x.shift(1).rolling(5, min_periods=1).mean()
+)
+df["away_goal_diff_avg"] = df.groupby("Away")["away_goal_diff"].transform(
     lambda x: x.shift(1).rolling(5, min_periods=1).mean()
 )
 df = df.dropna()
@@ -58,17 +86,23 @@ le_home = LabelEncoder()
 le_away = LabelEncoder()
 le_result = LabelEncoder()
 
-df['home_encoded'] = le_home.fit_transform(df['Home'])
-df['away_encoded'] = le_away.fit_transform(df['Away'])
-df['result_encoded'] = le_result.fit_transform(df['result'])
+df["home_encoded"] = le_home.fit_transform(df["Home"])
+df["away_encoded"] = le_away.fit_transform(df["Away"])
+df["result_encoded"] = le_result.fit_transform(df["result"])
 
-features = [
+features_core = [
     "home_encoded",
     "away_encoded",
     "home_goals_avg",
     "away_goals_avg",
     "home_conceded_avg",
     "away_conceded_avg",
+]
+features = features_core + [
+    "home_points_avg",
+    "away_points_avg",
+    "home_goal_diff_avg",
+    "away_goal_diff_avg",
 ]
 _overlap = _OUTCOME_LEAKAGE_COLS.intersection(features)
 if _overlap:
@@ -78,6 +112,7 @@ if _overlap:
     )
 
 X = df[features]
+X_core = df[features_core]
 y = df["result_encoded"]
 
 split_idx = int(len(df) * 0.8)
@@ -99,6 +134,7 @@ print(
 )
 
 X_train, X_test = X.iloc[:split_idx], X.iloc[split_idx:]
+X_train_core, X_test_core = X_core.iloc[:split_idx], X_core.iloc[split_idx:]
 y_train, y_test = y.iloc[:split_idx], y.iloc[split_idx:]
 
 
@@ -179,7 +215,7 @@ def print_confusion_matrix_compact(
 
 def baseline_always_home_win(n: int, le: LabelEncoder) -> np.ndarray:
     """Always predict home win."""
-    home_win_encoded = int(le.transform(['Home Win'])[0])
+    home_win_encoded = int(le.transform(["Home Win"])[0])
     return np.full(shape=n, fill_value=home_win_encoded, dtype=int)
 
 
@@ -206,9 +242,13 @@ baseline_pred_most_frequent = baseline_most_frequent_class(y_train, len(y_test))
 baseline_pred_random_weighted = baseline_random_by_train_freq(y_train, len(y_test))
 
 
-model = LogisticRegression(max_iter=1000)
-model.fit(X_train, y_train)
-predictions = model.predict(X_test)
+model_lr_core = LogisticRegression(max_iter=1000)
+model_lr_core.fit(X_train_core, y_train)
+predictions_core = model_lr_core.predict(X_test_core)
+
+model_lr_form = LogisticRegression(max_iter=1000)
+model_lr_form.fit(X_train, y_train)
+predictions_form = model_lr_form.predict(X_test)
 
 class_names = list(le_result.classes_)
 
@@ -216,7 +256,7 @@ phase1_evals = [
     evaluate_predictions(
         "Logistic regression",
         y_test,
-        predictions,
+        predictions_core,
         target_names=class_names,
         print_report=False,
     ),
@@ -241,36 +281,58 @@ phase1_evals = [
         target_names=class_names,
         print_report=False,
     ),
+    evaluate_predictions(
+        "Logistic regression (rolling form)",
+        y_test,
+        predictions_form,
+        target_names=class_names,
+        print_report=False,
+    ),
 ]
 
 # Phase 1 experiment manifest (add rows for new runs).
 eval_by_model_name = {e["model_name"]: e for e in phase1_evals}
-_phase1_feature_set = ", ".join(features)
+_phase1_feature_set_core = ", ".join(features_core)
+_phase1_feature_set_full = ", ".join(features)
 _phase1_split = "chronological_80_20_by_match_date"
 _phase1_experiment_rows = [
     {
         "experiment_id": "phase1_01",
         "model": "Always Home Win",
         "eval_model_name": "Baseline: always home win",
+        "features": _phase1_feature_set_core,
         "notes": "Predict Home Win for every test match.",
     },
     {
         "experiment_id": "phase1_02",
         "model": "Most Frequent Class",
         "eval_model_name": "Baseline: majority class",
+        "features": _phase1_feature_set_core,
         "notes": "Predict the majority class from the training set.",
     },
     {
         "experiment_id": "phase1_03",
         "model": "Class-Frequency Random",
         "eval_model_name": "Baseline: random (train class frequencies)",
+        "features": _phase1_feature_set_core,
         "notes": "Random labels sampled from training class frequencies (random_state=42).",
     },
     {
         "experiment_id": "phase1_04",
         "model": "Logistic Regression",
         "eval_model_name": "Logistic regression",
+        "features": _phase1_feature_set_core,
         "notes": "sklearn LogisticRegression; max_iter=1000; default hyperparameters.",
+    },
+    {
+        "experiment_id": "phase1_05",
+        "model": "Logistic Regression (rolling form)",
+        "eval_model_name": "Logistic regression (rolling form)",
+        "features": _phase1_feature_set_full,
+        "notes": (
+            "Adds home_points_avg, away_points_avg, home_goal_diff_avg, away_goal_diff_avg "
+            "(prior up to 5 same-role matches, shift(1)); same LR defaults as phase1_04."
+        ),
     },
 ]
 experiment_results = pd.DataFrame(
@@ -278,7 +340,7 @@ experiment_results = pd.DataFrame(
         {
             "experiment_id": spec["experiment_id"],
             "model": spec["model"],
-            "features": _phase1_feature_set,
+            "features": spec["features"],
             "split_method": _phase1_split,
             "accuracy": eval_by_model_name[spec["eval_model_name"]]["accuracy"],
             "macro_f1": eval_by_model_name[spec["eval_model_name"]]["macro_f1"],
@@ -310,14 +372,16 @@ for e in phase1_evals:
     )
 
 
-lr_eval = phase1_evals[0]
-cm = lr_eval["confusion_matrix"]
+lr_form_eval = phase1_evals[-1]
+cm = lr_form_eval["confusion_matrix"]
 sns.heatmap(
-    cm, annot=True, fmt="d",
+    cm,
+    annot=True,
+    fmt="d",
     xticklabels=class_names,
     yticklabels=class_names,
 )
-plt.title("Confusion Matrix — Logistic regression")
+plt.title("Confusion Matrix — Logistic regression (rolling form)")
 plt.xlabel("Predicted")
 plt.ylabel("Actual")
 plt.show()
