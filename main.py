@@ -61,6 +61,45 @@ df["home_goal_diff_avg"] = df.groupby("Home")["home_goal_diff"].transform(
 df["away_goal_diff_avg"] = df.groupby("Away")["away_goal_diff"].transform(
     lambda x: x.shift(1).rolling(5, min_periods=1).mean()
 )
+
+# Overall (venue-agnostic) prematch rollings: each team's matches in chronological order.
+_home_app = pd.DataFrame(
+    {
+        "orig_idx": df.index,
+        "team": df["Home"],
+        "date": df["Date"],
+        "points": df["home_points"],
+        "goal_diff": df["home_goal_diff"],
+        "role": "home",
+    }
+)
+_away_app = pd.DataFrame(
+    {
+        "orig_idx": df.index,
+        "team": df["Away"],
+        "date": df["Date"],
+        "points": df["away_points"],
+        "goal_diff": df["away_goal_diff"],
+        "role": "away",
+    }
+)
+_appearances = pd.concat([_home_app, _away_app], ignore_index=True)
+_appearances = _appearances.sort_values(["team", "date", "orig_idx"])
+_roll = lambda s: s.shift(1).rolling(5, min_periods=1).mean()
+_appearances["points_avg_overall"] = _appearances.groupby("team", sort=False)[
+    "points"
+].transform(_roll)
+_appearances["goal_diff_avg_overall"] = _appearances.groupby("team", sort=False)[
+    "goal_diff"
+].transform(_roll)
+_overall_wide = _appearances.pivot(
+    index="orig_idx", columns="role", values=["points_avg_overall", "goal_diff_avg_overall"]
+)
+df["home_team_points_avg_overall"] = _overall_wide["points_avg_overall"]["home"]
+df["away_team_points_avg_overall"] = _overall_wide["points_avg_overall"]["away"]
+df["home_team_goal_diff_avg_overall"] = _overall_wide["goal_diff_avg_overall"]["home"]
+df["away_team_goal_diff_avg_overall"] = _overall_wide["goal_diff_avg_overall"]["away"]
+
 df = df.dropna()
 
 print("\nPhase 1 — dataset")
@@ -104,15 +143,26 @@ features = features_core + [
     "home_goal_diff_avg",
     "away_goal_diff_avg",
 ]
-_overlap = _OUTCOME_LEAKAGE_COLS.intersection(features)
-if _overlap:
-    raise ValueError(
-        "Target leakage: these columns must not be model inputs: "
-        + ", ".join(sorted(_overlap))
-    )
+features_overall = features_core + [
+    "home_team_points_avg_overall",
+    "away_team_points_avg_overall",
+    "home_team_goal_diff_avg_overall",
+    "away_team_goal_diff_avg_overall",
+]
+for _feat_set_name, _feat_set in (
+    ("venue form (10)", features),
+    ("overall form (10)", features_overall),
+):
+    _overlap = _OUTCOME_LEAKAGE_COLS.intersection(_feat_set)
+    if _overlap:
+        raise ValueError(
+            f"Target leakage ({_feat_set_name}): these columns must not be model inputs: "
+            + ", ".join(sorted(_overlap))
+        )
 
 X = df[features]
 X_core = df[features_core]
+X_overall = df[features_overall]
 y = df["result_encoded"]
 
 split_idx = int(len(df) * 0.8)
@@ -133,8 +183,18 @@ print(
     "  Rolling *_avg: prior up-to-5 same-role matches per team (shift(1).rolling(5))."
 )
 
+print("\nPhase 1 — model features (logistic regression, overall recent form)")
+print("  Prematch only; no same-match scores or result.")
+for _i, _name in enumerate(features_overall, start=1):
+    print(f"  {_i}. {_name}")
+print(
+    "  Rolling *_overall: prior up-to-5 matches per team in all venues "
+    "(shift(1).rolling(5) on team chronological appearance stream)."
+)
+
 X_train, X_test = X.iloc[:split_idx], X.iloc[split_idx:]
 X_train_core, X_test_core = X_core.iloc[:split_idx], X_core.iloc[split_idx:]
+X_train_overall, X_test_overall = X_overall.iloc[:split_idx], X_overall.iloc[split_idx:]
 y_train, y_test = y.iloc[:split_idx], y.iloc[split_idx:]
 
 
@@ -250,6 +310,10 @@ model_lr_form = LogisticRegression(max_iter=1000)
 model_lr_form.fit(X_train, y_train)
 predictions_form = model_lr_form.predict(X_test)
 
+model_lr_overall = LogisticRegression(max_iter=1000)
+model_lr_overall.fit(X_train_overall, y_train)
+predictions_overall = model_lr_overall.predict(X_test_overall)
+
 class_names = list(le_result.classes_)
 
 phase1_evals = [
@@ -288,12 +352,20 @@ phase1_evals = [
         target_names=class_names,
         print_report=False,
     ),
+    evaluate_predictions(
+        "Logistic regression (overall form)",
+        y_test,
+        predictions_overall,
+        target_names=class_names,
+        print_report=False,
+    ),
 ]
 
 # Phase 1 experiment manifest (add rows for new runs).
 eval_by_model_name = {e["model_name"]: e for e in phase1_evals}
 _phase1_feature_set_core = ", ".join(features_core)
 _phase1_feature_set_full = ", ".join(features)
+_phase1_feature_set_overall = ", ".join(features_overall)
 _phase1_split = "chronological_80_20_by_match_date"
 _phase1_experiment_rows = [
     {
@@ -334,6 +406,17 @@ _phase1_experiment_rows = [
             "(prior up to 5 same-role matches, shift(1)); same LR defaults as phase1_04."
         ),
     },
+    {
+        "experiment_id": "phase1_06",
+        "model": "Logistic Regression (overall form)",
+        "eval_model_name": "Logistic regression (overall form)",
+        "features": _phase1_feature_set_overall,
+        "notes": (
+            "Adds home_team_points_avg_overall, away_team_points_avg_overall, "
+            "home_team_goal_diff_avg_overall, away_team_goal_diff_avg_overall "
+            "(prior up to 5 matches in all venues per team, shift(1)); same LR defaults as phase1_04."
+        ),
+    },
 ]
 experiment_results = pd.DataFrame(
     [
@@ -372,7 +455,7 @@ for e in phase1_evals:
     )
 
 
-lr_form_eval = phase1_evals[-1]
+lr_form_eval = eval_by_model_name["Logistic regression (rolling form)"]
 cm = lr_form_eval["confusion_matrix"]
 sns.heatmap(
     cm,
