@@ -1,3 +1,7 @@
+import json
+from datetime import datetime, timezone
+from pathlib import Path
+
 import pandas as pd
 import matplotlib.pyplot as plt
 from sklearn.preprocessing import LabelEncoder
@@ -518,4 +522,38 @@ sns.heatmap(
 plt.title(f"Confusion Matrix — {best_logistic_eval['model_name']}")
 plt.xlabel("Predicted")
 plt.ylabel("Actual")
+
+_outputs_dir = Path("outputs")
+_outputs_dir.mkdir(parents=True, exist_ok=True)
+
+experiment_results.to_csv(_outputs_dir / "phase1_experiment_results.csv", index=False)
+
+plt.savefig(
+    _outputs_dir / "best_logistic_confusion_matrix.png",
+    bbox_inches="tight",
+    dpi=150,
+)
 plt.show()
+
+_phase1_metadata = {
+    "rows_loaded": _n_rows_loaded,
+    "modeling_cohort_size": len(df),
+    "cohort_start_date": df["Date"].min().date().isoformat(),
+    "cohort_end_date": df["Date"].max().date().isoformat(),
+    "train_rows": n_train,
+    "test_rows": n_test,
+    "train_start_date": _train_dates.min().date().isoformat(),
+    "train_end_date": _train_dates.max().date().isoformat(),
+    "test_start_date": _test_dates.min().date().isoformat(),
+    "test_end_date": _test_dates.max().date().isoformat(),
+    "split_method": _phase1_split,
+    "best_logistic_model_name": best_logistic_eval["model_name"],
+    "best_logistic_accuracy": best_logistic_eval["accuracy"],
+    "best_logistic_macro_f1": best_logistic_eval["macro_f1"],
+    "generated_at": datetime.now(timezone.utc).isoformat(),
+}
+with open(_outputs_dir / "phase1_run_metadata.json", "w", encoding="utf-8") as f:
+    json.dump(_phase1_metadata, f, indent=2)
+    f.write("\n")
+
+print("\nPhase 1 artifacts saved to outputs/")
