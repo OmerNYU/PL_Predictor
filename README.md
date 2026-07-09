@@ -123,7 +123,7 @@ Ensure `premier-league-matches.csv` sits next to `main.py` (path is relative to 
 - Feature set is small (no odds, league table, shots, Elo, etc.).
 - Single chronological split (no walk-forward or cross-validation).
 - Everything lives in one script (not yet refactored into importable modules or a training/inference package).
-- `outputs/` and `models/` directories are scaffolded but unused in Phase 1 (no CSV/PNG export or model serialization yet).
+- Phase 1 writes `phase1_experiment_results.csv`, `best_logistic_confusion_matrix.png`, and `phase1_run_metadata.json` under `outputs/` (gitignored). `models/` is scaffolded but unused.
 
 ## Next Improvements
 
