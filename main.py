@@ -2,6 +2,7 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
+import joblib
 import pandas as pd
 import matplotlib.pyplot as plt
 from sklearn.preprocessing import LabelEncoder
@@ -346,6 +347,29 @@ model_lr_overall_diff = LogisticRegression(max_iter=1000)
 model_lr_overall_diff.fit(X_train_overall_diff, y_train)
 predictions_overall_diff = model_lr_overall_diff.predict(X_test_overall_diff)
 
+logistic_model_registry = {
+    "Logistic regression": {
+        "model": model_lr_core,
+        "feature_set_name": "core",
+        "features": features_core,
+    },
+    "Logistic regression (rolling form)": {
+        "model": model_lr_form,
+        "feature_set_name": "venue_form",
+        "features": features,
+    },
+    "Logistic regression (overall form)": {
+        "model": model_lr_overall,
+        "feature_set_name": "overall_form",
+        "features": features_overall,
+    },
+    "Logistic regression (overall form + matchup diff)": {
+        "model": model_lr_overall_diff,
+        "feature_set_name": "overall_form_plus_matchup_diff",
+        "features": features_overall_diff,
+    },
+}
+
 class_names = list(le_result.classes_)
 
 phase1_evals = [
@@ -511,6 +535,7 @@ _logistic_evals = [
 best_logistic_eval = max(
     _logistic_evals, key=lambda e: (e["accuracy"], e["macro_f1"])
 )
+best_model_spec = logistic_model_registry[best_logistic_eval["model_name"]]
 cm = best_logistic_eval["confusion_matrix"]
 sns.heatmap(
     cm,
@@ -557,3 +582,33 @@ with open(_outputs_dir / "phase1_run_metadata.json", "w", encoding="utf-8") as f
     f.write("\n")
 
 print("\nPhase 1 artifacts saved to outputs/")
+
+_models_dir = Path("models")
+_models_dir.mkdir(parents=True, exist_ok=True)
+
+joblib.dump(best_model_spec["model"], _models_dir / "best_logistic_model.joblib")
+joblib.dump(
+    {"home": le_home, "away": le_away, "result": le_result},
+    _models_dir / "label_encoders.joblib",
+)
+
+_best_model_metadata = {
+    "model_name": best_logistic_eval["model_name"],
+    "model_type": "LogisticRegression",
+    "feature_set_name": best_model_spec["feature_set_name"],
+    "features": list(best_model_spec["features"]),
+    "class_names": class_names,
+    "accuracy": best_logistic_eval["accuracy"],
+    "macro_f1": best_logistic_eval["macro_f1"],
+    "split_method": _phase1_split,
+    "train_start_date": _train_dates.min().date().isoformat(),
+    "train_end_date": _train_dates.max().date().isoformat(),
+    "test_start_date": _test_dates.min().date().isoformat(),
+    "test_end_date": _test_dates.max().date().isoformat(),
+    "generated_at": datetime.now(timezone.utc).isoformat(),
+}
+with open(_models_dir / "best_logistic_model_metadata.json", "w", encoding="utf-8") as f:
+    json.dump(_best_model_metadata, f, indent=2)
+    f.write("\n")
+
+print("Phase 1 model artifacts saved to models/")
