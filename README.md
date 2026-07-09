@@ -4,7 +4,7 @@ Baseline machine learning project for predicting Premier League match outcomes (
 
 ## Overview
 
-This project implements a Phase 1 experiment harness in `main.py`:
+This project implements a Phase 1 experiment harness in `src/matchlens/` (entry point: `main.py`):
 
 - Loads `premier-league-matches.csv`, maps full-time result `FTR` to labels, parses dates, and sorts rows chronologically.
 - Builds **pre-match** rolling features (5-match window with `shift(1)` so only past matches contribute).
@@ -24,8 +24,16 @@ PL_Predictor/
 ├── main.py
 ├── premier-league-matches.csv
 ├── requirements.txt
+├── src/
+│   └── matchlens/
+│       ├── __init__.py
+│       ├── data.py
+│       ├── features.py
+│       ├── evaluation.py
+│       ├── artifacts.py
+│       └── pipeline.py
 ├── outputs/          # generated artifacts (gitignored contents)
-├── models/           # future serialized models (gitignored contents)
+├── models/           # serialized models (gitignored contents)
 └── README.md
 ```
 
@@ -80,7 +88,7 @@ Overall-form set plus head-to-head strength differences (`phase1_07`):
 
 ## Leakage Guard
 
-`main.py` defines `_OUTCOME_LEAKAGE_COLS`, a frozen set of columns that must never be used as model inputs because they encode the same-fixture outcome (e.g. `FTR`, `HomeGoals`, `AwayGoals`, `home_points`, `away_points`, `home_goal_diff`, `away_goal_diff`).
+`src/matchlens/features.py` defines `OUTCOME_LEAKAGE_COLS`, a frozen set of columns that must never be used as model inputs because they encode the same-fixture outcome (e.g. `FTR`, `HomeGoals`, `AwayGoals`, `home_points`, `away_points`, `home_goal_diff`, `away_goal_diff`).
 
 At startup, the venue-form, overall-form, and overall+diff feature sets are checked against this set. If any leakage column is present, a `ValueError` is raised before training begins.
 
@@ -96,7 +104,7 @@ At startup, the venue-form, overall-form, and overall+diff feature sets are chec
 - **Console output:** Data quality and cohort summaries, split description, compact confusion matrices for all seven experiments, and a **Phase 1** `experiment_results` table with `experiment_id`, `model`, `features`, `split_method`, `accuracy`, `macro_f1`, and `notes`.
 - **Plot:** Confusion matrix heatmap for the **best logistic regression** variant—selected by highest test accuracy, with macro F1 as tie-breaker (`matplotlib` + `seaborn`).
 
-Helper functions in `main.py` include `evaluate_predictions` (shared metrics), `print_confusion_matrix_compact`, and the baseline generators above.
+Helper functions in `src/matchlens/evaluation.py` include `evaluate_predictions` (shared metrics), `print_confusion_matrix_compact`, and the baseline generators above.
 
 ## Installation
 
@@ -122,13 +130,11 @@ Ensure `premier-league-matches.csv` sits next to `main.py` (path is relative to 
 - Team identity is a simple `LabelEncoder` (no learned embeddings or hierarchical structure).
 - Feature set is small (no odds, league table, shots, Elo, etc.).
 - Single chronological split (no walk-forward or cross-validation).
-- Everything lives in one script (not yet refactored into importable modules or a training/inference package).
-- Phase 1 writes `phase1_experiment_results.csv`, `best_logistic_confusion_matrix.png`, and `phase1_run_metadata.json` under `outputs/` (gitignored). `models/` is scaffolded but unused.
+- Phase 1 writes `phase1_experiment_results.csv`, `best_logistic_confusion_matrix.png`, and `phase1_run_metadata.json` under `outputs/` (gitignored). Best model, encoders, and metadata are saved under `models/` (gitignored).
 
 ## Next Improvements
 
 - Richer pre-match features and optional external signals (e.g. bookmaker odds where available).
 - Additional models (e.g. gradient boosting) with the same chronological evaluation harness.
 - Walk-forward or rolling validation for more stable estimates of generalization.
-- Save fitted model, encoders, and feature definitions for reproducible inference.
-- Modular layout (`src/` or package) with CLI or config-driven experiments.
+- CLI or config-driven experiments.
