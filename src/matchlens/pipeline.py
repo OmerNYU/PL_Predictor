@@ -15,8 +15,11 @@ from matchlens.evaluation import (
     baseline_always_home_win,
     baseline_most_frequent_class,
     baseline_random_by_train_freq,
+    build_class_metrics_table,
     build_experiment_results,
     build_phase1_experiment_specs,
+    build_prediction_distribution_table,
+    build_probability_diagnostics_table,
     evaluate_predictions,
     print_all_confusion_matrices,
     print_experiment_summary,
@@ -133,18 +136,22 @@ def run_phase1_pipeline() -> None:
     model_lr_core = LogisticRegression(max_iter=1000)
     model_lr_core.fit(X_train_core, y_train)
     predictions_core = model_lr_core.predict(X_test_core)
+    proba_core = model_lr_core.predict_proba(X_test_core)
 
     model_lr_form = LogisticRegression(max_iter=1000)
     model_lr_form.fit(X_train, y_train)
     predictions_form = model_lr_form.predict(X_test)
+    proba_form = model_lr_form.predict_proba(X_test)
 
     model_lr_overall = LogisticRegression(max_iter=1000)
     model_lr_overall.fit(X_train_overall, y_train)
     predictions_overall = model_lr_overall.predict(X_test_overall)
+    proba_overall = model_lr_overall.predict_proba(X_test_overall)
 
     model_lr_overall_diff = LogisticRegression(max_iter=1000)
     model_lr_overall_diff.fit(X_train_overall_diff, y_train)
     predictions_overall_diff = model_lr_overall_diff.predict(X_test_overall_diff)
+    proba_overall_diff = model_lr_overall_diff.predict_proba(X_test_overall_diff)
 
     logistic_model_registry = {
         "Logistic regression": {
@@ -178,6 +185,7 @@ def run_phase1_pipeline() -> None:
             predictions_core,
             target_names=class_names,
             print_report=False,
+            y_proba=proba_core,
         ),
         evaluate_predictions(
             "Baseline: always home win",
@@ -206,6 +214,7 @@ def run_phase1_pipeline() -> None:
             predictions_form,
             target_names=class_names,
             print_report=False,
+            y_proba=proba_form,
         ),
         evaluate_predictions(
             "Logistic regression (overall form)",
@@ -213,6 +222,7 @@ def run_phase1_pipeline() -> None:
             predictions_overall,
             target_names=class_names,
             print_report=False,
+            y_proba=proba_overall,
         ),
         evaluate_predictions(
             "Logistic regression (overall form + matchup diff)",
@@ -220,6 +230,7 @@ def run_phase1_pipeline() -> None:
             predictions_overall_diff,
             target_names=class_names,
             print_report=False,
+            y_proba=proba_overall_diff,
         ),
     ]
 
@@ -233,6 +244,13 @@ def run_phase1_pipeline() -> None:
         phase1_evals,
         experiment_specs,
         split_method=PHASE1_SPLIT_METHOD,
+    )
+    class_metrics = build_class_metrics_table(phase1_evals, experiment_specs)
+    prediction_distribution = build_prediction_distribution_table(
+        phase1_evals, experiment_specs
+    )
+    probability_diagnostics = build_probability_diagnostics_table(
+        phase1_evals, experiment_specs
     )
     print_experiment_summary(experiment_results)
     print_all_confusion_matrices(phase1_evals, target_names=class_names)
@@ -254,6 +272,9 @@ def run_phase1_pipeline() -> None:
         train_dates=train_dates,
         test_dates=test_dates,
         best_logistic_eval=best_logistic_eval,
+        class_metrics=class_metrics,
+        prediction_distribution=prediction_distribution,
+        probability_diagnostics=probability_diagnostics,
     )
     save_phase1_models(
         best_model=best_model_spec["model"],

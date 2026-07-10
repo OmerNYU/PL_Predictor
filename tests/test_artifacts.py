@@ -122,7 +122,43 @@ def test_save_phase1_outputs_metadata_schema(
             "split_method": [PHASE1_SPLIT_METHOD],
             "accuracy": [0.4],
             "macro_f1": [0.2],
+            "draw_precision": [0.0],
+            "draw_recall": [0.0],
+            "draw_f1": [0.0],
+            "predicted_draw_count": [0],
+            "predicted_draw_proportion": [0.0],
             "notes": ["test"],
+        }
+    )
+    class_metrics = pd.DataFrame(
+        {
+            "experiment_id": ["phase1_01", "phase1_01", "phase1_01"],
+            "model": ["Always Home Win"] * 3,
+            "class_name": ["Away Win", "Draw", "Home Win"],
+            "precision": [0.0, 0.0, 0.4],
+            "recall": [0.0, 0.0, 1.0],
+            "f1": [0.0, 0.0, 0.57],
+            "support": [1, 1, 1],
+        }
+    )
+    prediction_distribution = pd.DataFrame(
+        {
+            "experiment_id": ["phase1_01", "phase1_01", "phase1_01"],
+            "model": ["Always Home Win"] * 3,
+            "predicted_class": ["Away Win", "Draw", "Home Win"],
+            "count": [0, 0, 3],
+            "proportion": [0.0, 0.0, 1.0],
+        }
+    )
+    probability_diagnostics = pd.DataFrame(
+        {
+            "experiment_id": ["phase1_04"],
+            "model": ["Logistic Regression"],
+            "log_loss": [1.0],
+            "multiclass_brier_score": [0.5],
+            "mean_top_probability": [0.6],
+            "mean_probability_gap": [0.2],
+            "mean_entropy": [0.9],
         }
     )
 
@@ -135,12 +171,18 @@ def test_save_phase1_outputs_metadata_schema(
         train_dates=train_dates,
         test_dates=test_dates,
         best_logistic_eval=best_logistic_eval,
+        class_metrics=class_metrics,
+        prediction_distribution=prediction_distribution,
+        probability_diagnostics=probability_diagnostics,
         outputs_dir=tmp_path,
     )
 
     metadata_path = tmp_path / "phase1_run_metadata.json"
     assert metadata_path.exists()
     assert (tmp_path / "phase1_experiment_results.csv").exists()
+    assert (tmp_path / "phase1_class_metrics.csv").exists()
+    assert (tmp_path / "phase1_prediction_distribution.csv").exists()
+    assert (tmp_path / "phase1_probability_diagnostics.csv").exists()
 
     with open(metadata_path, encoding="utf-8") as f:
         metadata = json.load(f)

@@ -4,10 +4,141 @@ from typing import Optional, Sequence
 
 import numpy as np
 import pandas as pd
-from sklearn.metrics import accuracy_score, confusion_matrix, f1_score
+from sklearn.metrics import (
+    accuracy_score,
+    confusion_matrix,
+    f1_score,
+    log_loss,
+    precision_recall_fscore_support,
+)
 from sklearn.preprocessing import LabelEncoder
 
 PHASE1_SPLIT_METHOD = "chronological_80_20_by_match_date"
+_ENTROPY_EPS = 1e-12
+
+EXPERIMENT_SUMMARY_DISPLAY_COLUMNS = [
+    "experiment_id",
+    "model",
+    "features",
+    "split_method",
+    "accuracy",
+    "macro_f1",
+    "notes",
+]
+
+
+def compute_per_class_metrics(
+    y_true,
+    y_pred,
+    target_names: Sequence[str],
+) -> list[dict]:
+    """Per-class precision, recall, F1, and support (zero_division=0)."""
+    y_true = np.asarray(y_true).ravel()
+    y_pred = np.asarray(y_pred).ravel()
+    labels = np.arange(len(target_names), dtype=int)
+    precision, recall, f1, support = precision_recall_fscore_support(
+        y_true,
+        y_pred,
+        labels=labels,
+        zero_division=0,
+    )
+    return [
+        {
+            "class_name": target_names[i],
+            "precision": float(precision[i]),
+            "recall": float(recall[i]),
+            "f1": float(f1[i]),
+            "support": int(support[i]),
+        }
+        for i in range(len(target_names))
+    ]
+
+
+def compute_prediction_distribution(
+    y_pred,
+    target_names: Sequence[str],
+) -> list[dict]:
+    """Predicted class counts and proportions for every class in target_names."""
+    y_pred = np.asarray(y_pred).ravel()
+    n = len(y_pred)
+    labels = np.arange(len(target_names), dtype=int)
+    counts = np.bincount(y_pred.astype(int), minlength=len(target_names))
+    rows = []
+    for i, lab in enumerate(labels):
+        count = int(counts[lab]) if lab < len(counts) else 0
+        proportion = float(count / n) if n > 0 else 0.0
+        rows.append(
+            {
+                "predicted_class": target_names[i],
+                "count": count,
+                "proportion": proportion,
+            }
+        )
+    return rows
+
+
+def compute_probability_diagnostics(
+    y_true,
+    y_proba,
+    *,
+    labels: Sequence[int],
+) -> dict:
+    """Probability-quality diagnostics for models that expose predict_proba."""
+    y_true = np.asarray(y_true).ravel()
+    y_proba = np.asarray(y_proba, dtype=float)
+    labels_arr = np.asarray(labels, dtype=int)
+
+    ll = float(log_loss(y_true, y_proba, labels=labels_arr))
+
+    n_classes = len(labels_arr)
+    one_hot = np.zeros_like(y_proba)
+    # Map true labels to column indices matching labels_arr order
+    label_to_col = {int(lab): i for i, lab in enumerate(labels_arr)}
+    for i, yt in enumerate(y_true):
+        col = label_to_col[int(yt)]
+        one_hot[i, col] = 1.0
+    brier = float(np.mean(np.sum((y_proba - one_hot) ** 2, axis=1)))
+
+    sorted_probs = np.sort(y_proba, axis=1)
+    top = sorted_probs[:, -1]
+    second = sorted_probs[:, -2] if n_classes >= 2 else np.zeros(len(y_proba))
+    mean_top = float(np.mean(top))
+    mean_gap = float(np.mean(top - second))
+
+    entropy = -np.sum(y_proba * np.log(y_proba + _ENTROPY_EPS), axis=1)
+    mean_entropy = float(np.mean(entropy))
+
+    return {
+        "log_loss": ll,
+        "multiclass_brier_score": brier,
+        "mean_top_probability": mean_top,
+        "mean_probability_gap": mean_gap,
+        "mean_entropy": mean_entropy,
+    }
+
+
+def attach_prediction_diagnostics(
+    eval_dict: dict,
+    y_true,
+    y_pred,
+    *,
+    target_names: Sequence[str],
+    y_proba=None,
+) -> dict:
+    """Attach per-class, distribution, and optional probability diagnostics to an eval dict."""
+    eval_dict = dict(eval_dict)
+    eval_dict["class_metrics"] = compute_per_class_metrics(
+        y_true, y_pred, target_names
+    )
+    eval_dict["prediction_distribution"] = compute_prediction_distribution(
+        y_pred, target_names
+    )
+    if y_proba is not None:
+        labels = np.arange(len(target_names), dtype=int)
+        eval_dict["probability_diagnostics"] = compute_probability_diagnostics(
+            y_true, y_proba, labels=labels
+        )
+    return eval_dict
 
 
 def evaluate_predictions(
@@ -17,6 +148,7 @@ def evaluate_predictions(
     *,
     target_names: Optional[Sequence[str]] = None,
     print_report: bool = True,
+    y_proba=None,
 ) -> dict:
     """
     Shared metrics for any classifier: accuracy, macro F1, confusion matrix.
@@ -24,6 +156,7 @@ def evaluate_predictions(
     y_true and y_pred should be aligned (same length) and use the same label encoding.
     Pass target_names (e.g. le.classes_) for readable confusion-matrix headers in the printed summary.
     Set print_report=False to only compute metrics (e.g. for side-by-side comparison tables).
+    When y_proba is provided (logistic models), also attach probability diagnostics.
     """
     y_true = np.asarray(y_true).ravel()
     y_pred = np.asarray(y_pred).ravel()
@@ -58,13 +191,22 @@ def evaluate_predictions(
             row_parts = "".join(f"{cm[i, j]:>14}" for j in range(len(labels)))
             print(f"{name_for[int(row_label)]:>12}{row_parts}")
 
-    return {
+    result = {
         "model_name": model_name,
         "accuracy": float(accuracy),
         "macro_f1": float(macro_f1),
         "confusion_matrix": cm,
         "labels": labels,
     }
+    if target_names is not None:
+        result = attach_prediction_diagnostics(
+            result,
+            y_true,
+            y_pred,
+            target_names=target_names,
+            y_proba=y_proba,
+        )
+    return result
 
 
 def print_confusion_matrix_compact(
@@ -183,6 +325,27 @@ def build_phase1_experiment_specs(
     ]
 
 
+def _draw_metrics_from_eval(eval_dict: dict) -> dict:
+    """Extract draw-specific fields from an eval dict's attached diagnostics."""
+    class_metrics = {row["class_name"]: row for row in eval_dict.get("class_metrics", [])}
+    draw = class_metrics.get(
+        "Draw",
+        {"precision": 0.0, "recall": 0.0, "f1": 0.0},
+    )
+    dist = {
+        row["predicted_class"]: row
+        for row in eval_dict.get("prediction_distribution", [])
+    }
+    draw_dist = dist.get("Draw", {"count": 0, "proportion": 0.0})
+    return {
+        "draw_precision": float(draw["precision"]),
+        "draw_recall": float(draw["recall"]),
+        "draw_f1": float(draw["f1"]),
+        "predicted_draw_count": int(draw_dist["count"]),
+        "predicted_draw_proportion": float(draw_dist["proportion"]),
+    }
+
+
 def build_experiment_results(
     phase1_evals: list[dict],
     experiment_specs: list[dict],
@@ -190,29 +353,109 @@ def build_experiment_results(
     split_method: str = PHASE1_SPLIT_METHOD,
 ) -> pd.DataFrame:
     eval_by_model_name = {e["model_name"]: e for e in phase1_evals}
-    return pd.DataFrame(
-        [
+    rows = []
+    for spec in experiment_specs:
+        ev = eval_by_model_name[spec["eval_model_name"]]
+        draw = _draw_metrics_from_eval(ev)
+        rows.append(
             {
                 "experiment_id": spec["experiment_id"],
                 "model": spec["model"],
                 "features": spec["features"],
                 "split_method": split_method,
-                "accuracy": eval_by_model_name[spec["eval_model_name"]]["accuracy"],
-                "macro_f1": eval_by_model_name[spec["eval_model_name"]]["macro_f1"],
+                "accuracy": ev["accuracy"],
+                "macro_f1": ev["macro_f1"],
+                "draw_precision": draw["draw_precision"],
+                "draw_recall": draw["draw_recall"],
+                "draw_f1": draw["draw_f1"],
+                "predicted_draw_count": draw["predicted_draw_count"],
+                "predicted_draw_proportion": draw["predicted_draw_proportion"],
                 "notes": spec["notes"],
             }
-            for spec in experiment_specs
-        ]
-    )
+        )
+    return pd.DataFrame(rows)
+
+
+def build_class_metrics_table(
+    phase1_evals: list[dict],
+    experiment_specs: list[dict],
+) -> pd.DataFrame:
+    eval_by_model_name = {e["model_name"]: e for e in phase1_evals}
+    rows = []
+    for spec in experiment_specs:
+        ev = eval_by_model_name[spec["eval_model_name"]]
+        for cm in ev.get("class_metrics", []):
+            rows.append(
+                {
+                    "experiment_id": spec["experiment_id"],
+                    "model": spec["model"],
+                    "class_name": cm["class_name"],
+                    "precision": cm["precision"],
+                    "recall": cm["recall"],
+                    "f1": cm["f1"],
+                    "support": cm["support"],
+                }
+            )
+    return pd.DataFrame(rows)
+
+
+def build_prediction_distribution_table(
+    phase1_evals: list[dict],
+    experiment_specs: list[dict],
+) -> pd.DataFrame:
+    eval_by_model_name = {e["model_name"]: e for e in phase1_evals}
+    rows = []
+    for spec in experiment_specs:
+        ev = eval_by_model_name[spec["eval_model_name"]]
+        for dist in ev.get("prediction_distribution", []):
+            rows.append(
+                {
+                    "experiment_id": spec["experiment_id"],
+                    "model": spec["model"],
+                    "predicted_class": dist["predicted_class"],
+                    "count": dist["count"],
+                    "proportion": dist["proportion"],
+                }
+            )
+    return pd.DataFrame(rows)
+
+
+def build_probability_diagnostics_table(
+    phase1_evals: list[dict],
+    experiment_specs: list[dict],
+) -> pd.DataFrame:
+    eval_by_model_name = {e["model_name"]: e for e in phase1_evals}
+    rows = []
+    for spec in experiment_specs:
+        ev = eval_by_model_name[spec["eval_model_name"]]
+        prob = ev.get("probability_diagnostics")
+        if prob is None:
+            continue
+        rows.append(
+            {
+                "experiment_id": spec["experiment_id"],
+                "model": spec["model"],
+                "log_loss": prob["log_loss"],
+                "multiclass_brier_score": prob["multiclass_brier_score"],
+                "mean_top_probability": prob["mean_top_probability"],
+                "mean_probability_gap": prob["mean_probability_gap"],
+                "mean_entropy": prob["mean_entropy"],
+            }
+        )
+    return pd.DataFrame(rows)
 
 
 def print_experiment_summary(experiment_results: pd.DataFrame) -> None:
     print(f"\n{'=' * 72}")
     print("Phase 1 — evaluation summary (held-out test set)")
     print(f"{'=' * 72}")
+    display_cols = [
+        c for c in EXPERIMENT_SUMMARY_DISPLAY_COLUMNS if c in experiment_results.columns
+    ]
+    display_df = experiment_results[display_cols]
     with pd.option_context("display.max_colwidth", None):
         print(
-            experiment_results.to_string(
+            display_df.to_string(
                 index=False,
                 formatters={
                     "accuracy": lambda x: f"{x:.4f}",

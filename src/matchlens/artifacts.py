@@ -50,12 +50,26 @@ def save_phase1_outputs(
     train_dates: pd.Series,
     test_dates: pd.Series,
     best_logistic_eval: dict,
+    class_metrics: pd.DataFrame | None = None,
+    prediction_distribution: pd.DataFrame | None = None,
+    probability_diagnostics: pd.DataFrame | None = None,
     outputs_dir: Path | str = "outputs",
 ) -> None:
     outputs_path = Path(outputs_dir)
     outputs_path.mkdir(parents=True, exist_ok=True)
 
     experiment_results.to_csv(outputs_path / "phase1_experiment_results.csv", index=False)
+
+    if class_metrics is not None:
+        class_metrics.to_csv(outputs_path / "phase1_class_metrics.csv", index=False)
+    if prediction_distribution is not None:
+        prediction_distribution.to_csv(
+            outputs_path / "phase1_prediction_distribution.csv", index=False
+        )
+    if probability_diagnostics is not None:
+        probability_diagnostics.to_csv(
+            outputs_path / "phase1_probability_diagnostics.csv", index=False
+        )
 
     phase1_metadata = {
         "rows_loaded": n_rows_loaded,
@@ -79,6 +93,12 @@ def save_phase1_outputs(
         f.write("\n")
 
     print("\nPhase 1 artifacts saved to outputs/")
+    if (
+        class_metrics is not None
+        or prediction_distribution is not None
+        or probability_diagnostics is not None
+    ):
+        print("Phase 1 evaluation diagnostics saved to outputs/")
 
 
 def save_phase1_models(
