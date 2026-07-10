@@ -100,7 +100,7 @@ At startup, the venue-form, overall-form, and overall+diff feature sets are chec
   - Always predict the **majority class** from the training labels
   - **Random** labels drawn with probabilities matching training class frequencies (`random_state=42`)
 - **Split:** Chronological **80% / 20%** by row order after sorting by `Date` (`split_idx = int(len(df) * 0.8)`). All reported metrics use the test slice only.
-- **Metrics:** Accuracy, macro-averaged F1 (`zero_division=0`), confusion matrix (rows = actual, columns = predicted).
+- **Metrics:** Accuracy, macro-averaged F1 (`zero_division=0`), confusion matrix (rows = actual, columns = predicted). Phase 1 also saves per-class metrics, prediction distributions, and logistic probability diagnostics under `outputs/` for inspection (including the known zero-draw logistic behavior).
 - **Console output:** Data quality and cohort summaries, split description, compact confusion matrices for all seven experiments, and a **Phase 1** `experiment_results` table with `experiment_id`, `model`, `features`, `split_method`, `accuracy`, `macro_f1`, and `notes`.
 - **Plot:** Confusion matrix heatmap for the **best logistic regression** variant—selected by highest test accuracy, with macro F1 as tie-breaker (`matplotlib` + `seaborn`).
 
@@ -130,7 +130,7 @@ Ensure `premier-league-matches.csv` sits next to `main.py` (path is relative to 
 - Team identity is a simple `LabelEncoder` (no learned embeddings or hierarchical structure).
 - Feature set is small (no odds, league table, shots, Elo, etc.).
 - Single chronological split (no walk-forward or cross-validation).
-- Phase 1 writes `phase1_experiment_results.csv`, `best_logistic_confusion_matrix.png`, and `phase1_run_metadata.json` under `outputs/` (gitignored). Best model, encoders, and metadata are saved under `models/` (gitignored).
+- Phase 1 writes `phase1_experiment_results.csv`, `best_logistic_confusion_matrix.png`, and `phase1_run_metadata.json` under `outputs/` (gitignored), plus evaluation diagnostics: `phase1_class_metrics.csv`, `phase1_prediction_distribution.csv`, and `phase1_probability_diagnostics.csv`. Best model, encoders, and metadata are saved under `models/` (gitignored).
 
 ## Next Improvements
 
