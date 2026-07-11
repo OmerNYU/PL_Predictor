@@ -143,3 +143,20 @@ def save_phase1_models(
         f.write("\n")
 
     print("Phase 1 model artifacts saved to models/")
+
+
+def save_phase1_backtest_outputs(
+    *,
+    backtest_results: pd.DataFrame,
+    backtest_summary: dict,
+    outputs_dir: Path | str = "outputs",
+) -> None:
+    outputs_path = Path(outputs_dir)
+    outputs_path.mkdir(parents=True, exist_ok=True)
+
+    backtest_results.to_csv(outputs_path / "phase1_backtest_results.csv", index=False)
+    with open(outputs_path / "phase1_backtest_summary.json", "w", encoding="utf-8") as f:
+        json.dump(backtest_summary, f, indent=2)
+        f.write("\n")
+
+    print("Phase 1 backtesting artifacts saved to outputs/")

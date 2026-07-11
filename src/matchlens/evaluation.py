@@ -325,7 +325,7 @@ def build_phase1_experiment_specs(
     ]
 
 
-def _draw_metrics_from_eval(eval_dict: dict) -> dict:
+def draw_metrics_from_eval(eval_dict: dict) -> dict:
     """Extract draw-specific fields from an eval dict's attached diagnostics."""
     class_metrics = {row["class_name"]: row for row in eval_dict.get("class_metrics", [])}
     draw = class_metrics.get(
@@ -356,7 +356,7 @@ def build_experiment_results(
     rows = []
     for spec in experiment_specs:
         ev = eval_by_model_name[spec["eval_model_name"]]
-        draw = _draw_metrics_from_eval(ev)
+        draw = draw_metrics_from_eval(ev)
         rows.append(
             {
                 "experiment_id": spec["experiment_id"],

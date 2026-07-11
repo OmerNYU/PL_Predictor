@@ -100,7 +100,7 @@ At startup, the venue-form, overall-form, and overall+diff feature sets are chec
   - Always predict the **majority class** from the training labels
   - **Random** labels drawn with probabilities matching training class frequencies (`random_state=42`)
 - **Split:** Chronological **80% / 20%** by row order after sorting by `Date` (`split_idx = int(len(df) * 0.8)`). All reported metrics use the test slice only.
-- **Metrics:** Accuracy, macro-averaged F1 (`zero_division=0`), confusion matrix (rows = actual, columns = predicted). Phase 1 also saves per-class metrics, prediction distributions, and logistic probability diagnostics under `outputs/` for inspection (including the known zero-draw logistic behavior).
+- **Metrics:** Accuracy, macro-averaged F1 (`zero_division=0`), confusion matrix (rows = actual, columns = predicted). Phase 1 also saves per-class metrics, prediction distributions, and logistic probability diagnostics under `outputs/` for inspection (including the known zero-draw logistic behavior). After the single-split run, a season walk-forward backtest diagnostic is written for the overall-form logistic setup (`phase1_backtest_results.csv`, `phase1_backtest_summary.json`).
 - **Console output:** Data quality and cohort summaries, split description, compact confusion matrices for all seven experiments, and a **Phase 1** `experiment_results` table with `experiment_id`, `model`, `features`, `split_method`, `accuracy`, `macro_f1`, and `notes`.
 - **Plot:** Confusion matrix heatmap for the **best logistic regression** variant—selected by highest test accuracy, with macro F1 as tie-breaker (`matplotlib` + `seaborn`).
 
@@ -129,12 +129,12 @@ Ensure `premier-league-matches.csv` sits next to `main.py` (path is relative to 
 
 - Team identity is a simple `LabelEncoder` (no learned embeddings or hierarchical structure).
 - Feature set is small (no odds, league table, shots, Elo, etc.).
-- Single chronological split (no walk-forward or cross-validation).
-- Phase 1 writes `phase1_experiment_results.csv`, `best_logistic_confusion_matrix.png`, and `phase1_run_metadata.json` under `outputs/` (gitignored), plus evaluation diagnostics: `phase1_class_metrics.csv`, `phase1_prediction_distribution.csv`, and `phase1_probability_diagnostics.csv`. Best model, encoders, and metadata are saved under `models/` (gitignored).
+- Primary reported metrics still use a single chronological 80/20 split; Phase 1 also runs a season walk-forward backtest diagnostic on the overall-form logistic setup (separate from model selection).
+- Phase 1 writes `phase1_experiment_results.csv`, `best_logistic_confusion_matrix.png`, and `phase1_run_metadata.json` under `outputs/` (gitignored), plus evaluation diagnostics: `phase1_class_metrics.csv`, `phase1_prediction_distribution.csv`, and `phase1_probability_diagnostics.csv`. Season backtesting adds `phase1_backtest_results.csv` and `phase1_backtest_summary.json`. Best model, encoders, and metadata are saved under `models/` (gitignored).
 
 ## Next Improvements
 
 - Richer pre-match features and optional external signals (e.g. bookmaker odds where available).
 - Additional models (e.g. gradient boosting) with the same chronological evaluation harness.
-- Walk-forward or rolling validation for more stable estimates of generalization.
+- Use season backtesting more heavily for model comparison and hyperparameter choices.
 - CLI or config-driven experiments.
