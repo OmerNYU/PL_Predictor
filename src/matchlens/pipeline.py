@@ -6,9 +6,11 @@ from sklearn.preprocessing import LabelEncoder
 
 from matchlens.artifacts import (
     save_best_logistic_confusion_matrix,
+    save_phase1_backtest_outputs,
     save_phase1_models,
     save_phase1_outputs,
 )
+from matchlens.backtesting import print_backtest_summary, run_season_backtest
 from matchlens.data import load_matches
 from matchlens.evaluation import (
     PHASE1_SPLIT_METHOD,
@@ -286,4 +288,15 @@ def run_phase1_pipeline() -> None:
         class_names=class_names,
         train_dates=train_dates,
         test_dates=test_dates,
+    )
+
+    backtest_results, backtest_summary = run_season_backtest(
+        df,
+        features=features_overall,
+        class_names=class_names,
+    )
+    print_backtest_summary(backtest_summary)
+    save_phase1_backtest_outputs(
+        backtest_results=backtest_results,
+        backtest_summary=backtest_summary,
     )
