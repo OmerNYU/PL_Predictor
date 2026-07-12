@@ -16,6 +16,12 @@ from sklearn.preprocessing import LabelEncoder
 PHASE1_SPLIT_METHOD = "chronological_80_20_by_match_date"
 _ENTROPY_EPS = 1e-12
 
+CONFIDENCE_TIERS = ("High", "Medium", "Low")
+CONFIDENCE_HIGH_TOP = 0.55
+CONFIDENCE_HIGH_GAP = 0.15
+CONFIDENCE_MEDIUM_TOP = 0.45
+CONFIDENCE_MEDIUM_GAP = 0.08
+
 EXPERIMENT_SUMMARY_DISPLAY_COLUMNS = [
     "experiment_id",
     "model",
@@ -77,6 +83,27 @@ def compute_prediction_distribution(
     return rows
 
 
+def compute_per_sample_probability_features(y_proba) -> dict:
+    """Per-row top/second probability, gap, and entropy from a probability matrix."""
+    y_proba = np.asarray(y_proba, dtype=float)
+    if y_proba.ndim != 2:
+        raise ValueError("y_proba must be a 2D array of shape (n_samples, n_classes)")
+    n_classes = y_proba.shape[1]
+    sorted_probs = np.sort(y_proba, axis=1)
+    top = sorted_probs[:, -1]
+    second = (
+        sorted_probs[:, -2] if n_classes >= 2 else np.zeros(len(y_proba), dtype=float)
+    )
+    gap = top - second
+    entropy = -np.sum(y_proba * np.log(y_proba + _ENTROPY_EPS), axis=1)
+    return {
+        "top_probability": top,
+        "second_probability": second,
+        "probability_gap": gap,
+        "entropy": entropy,
+    }
+
+
 def compute_probability_diagnostics(
     y_true,
     y_proba,
@@ -90,7 +117,6 @@ def compute_probability_diagnostics(
 
     ll = float(log_loss(y_true, y_proba, labels=labels_arr))
 
-    n_classes = len(labels_arr)
     one_hot = np.zeros_like(y_proba)
     # Map true labels to column indices matching labels_arr order
     label_to_col = {int(lab): i for i, lab in enumerate(labels_arr)}
@@ -99,22 +125,93 @@ def compute_probability_diagnostics(
         one_hot[i, col] = 1.0
     brier = float(np.mean(np.sum((y_proba - one_hot) ** 2, axis=1)))
 
-    sorted_probs = np.sort(y_proba, axis=1)
-    top = sorted_probs[:, -1]
-    second = sorted_probs[:, -2] if n_classes >= 2 else np.zeros(len(y_proba))
-    mean_top = float(np.mean(top))
-    mean_gap = float(np.mean(top - second))
-
-    entropy = -np.sum(y_proba * np.log(y_proba + _ENTROPY_EPS), axis=1)
-    mean_entropy = float(np.mean(entropy))
+    feats = compute_per_sample_probability_features(y_proba)
 
     return {
         "log_loss": ll,
         "multiclass_brier_score": brier,
-        "mean_top_probability": mean_top,
-        "mean_probability_gap": mean_gap,
-        "mean_entropy": mean_entropy,
+        "mean_top_probability": float(np.mean(feats["top_probability"])),
+        "mean_probability_gap": float(np.mean(feats["probability_gap"])),
+        "mean_entropy": float(np.mean(feats["entropy"])),
     }
+
+
+def assign_confidence_tiers(
+    y_proba,
+    *,
+    high_top: float = CONFIDENCE_HIGH_TOP,
+    high_gap: float = CONFIDENCE_HIGH_GAP,
+    medium_top: float = CONFIDENCE_MEDIUM_TOP,
+    medium_gap: float = CONFIDENCE_MEDIUM_GAP,
+) -> np.ndarray:
+    """Assign High / Medium / Low confidence tiers from predicted probabilities."""
+    feats = compute_per_sample_probability_features(y_proba)
+    top = feats["top_probability"]
+    gap = feats["probability_gap"]
+    tiers = np.full(len(top), "Low", dtype=object)
+    medium = (top >= medium_top) & (gap >= medium_gap)
+    high = (top >= high_top) & (gap >= high_gap)
+    tiers[medium] = "Medium"
+    tiers[high] = "High"
+    return tiers
+
+
+def compute_confidence_diagnostics(
+    y_true,
+    y_pred,
+    y_proba,
+    target_names: Sequence[str],
+) -> list[dict]:
+    """Aggregate accuracy and draw stats within each confidence tier."""
+    y_true = np.asarray(y_true).ravel()
+    y_pred = np.asarray(y_pred).ravel()
+    y_proba = np.asarray(y_proba, dtype=float)
+    feats = compute_per_sample_probability_features(y_proba)
+    tiers = assign_confidence_tiers(y_proba)
+    n = len(y_true)
+    draw_idx = list(target_names).index("Draw")
+
+    rows: list[dict] = []
+    for tier in CONFIDENCE_TIERS:
+        mask = tiers == tier
+        count = int(mask.sum())
+        proportion = float(count / n) if n > 0 else 0.0
+        if count == 0:
+            rows.append(
+                {
+                    "confidence_tier": tier,
+                    "count": 0,
+                    "proportion": 0.0,
+                    "accuracy": float("nan"),
+                    "mean_top_probability": float("nan"),
+                    "mean_probability_gap": float("nan"),
+                    "mean_entropy": float("nan"),
+                    "predicted_draw_count": 0,
+                    "predicted_draw_proportion": 0.0,
+                    "actual_draw_count": 0,
+                    "actual_draw_proportion": 0.0,
+                }
+            )
+            continue
+
+        pred_draw = int(np.sum(y_pred[mask] == draw_idx))
+        actual_draw = int(np.sum(y_true[mask] == draw_idx))
+        rows.append(
+            {
+                "confidence_tier": tier,
+                "count": count,
+                "proportion": proportion,
+                "accuracy": float(np.mean(y_true[mask] == y_pred[mask])),
+                "mean_top_probability": float(np.mean(feats["top_probability"][mask])),
+                "mean_probability_gap": float(np.mean(feats["probability_gap"][mask])),
+                "mean_entropy": float(np.mean(feats["entropy"][mask])),
+                "predicted_draw_count": pred_draw,
+                "predicted_draw_proportion": float(pred_draw / count),
+                "actual_draw_count": actual_draw,
+                "actual_draw_proportion": float(actual_draw / count),
+            }
+        )
+    return rows
 
 
 def attach_prediction_diagnostics(
@@ -137,6 +234,9 @@ def attach_prediction_diagnostics(
         labels = np.arange(len(target_names), dtype=int)
         eval_dict["probability_diagnostics"] = compute_probability_diagnostics(
             y_true, y_proba, labels=labels
+        )
+        eval_dict["confidence_diagnostics"] = compute_confidence_diagnostics(
+            y_true, y_pred, y_proba, target_names
         )
     return eval_dict
 
@@ -442,6 +542,38 @@ def build_probability_diagnostics_table(
                 "mean_entropy": prob["mean_entropy"],
             }
         )
+    return pd.DataFrame(rows)
+
+
+def build_confidence_diagnostics_table(
+    phase1_evals: list[dict],
+    experiment_specs: list[dict],
+) -> pd.DataFrame:
+    eval_by_model_name = {e["model_name"]: e for e in phase1_evals}
+    rows = []
+    for spec in experiment_specs:
+        ev = eval_by_model_name[spec["eval_model_name"]]
+        conf = ev.get("confidence_diagnostics")
+        if conf is None:
+            continue
+        for row in conf:
+            rows.append(
+                {
+                    "experiment_id": spec["experiment_id"],
+                    "model": spec["model"],
+                    "confidence_tier": row["confidence_tier"],
+                    "count": row["count"],
+                    "proportion": row["proportion"],
+                    "accuracy": row["accuracy"],
+                    "mean_top_probability": row["mean_top_probability"],
+                    "mean_probability_gap": row["mean_probability_gap"],
+                    "mean_entropy": row["mean_entropy"],
+                    "predicted_draw_count": row["predicted_draw_count"],
+                    "predicted_draw_proportion": row["predicted_draw_proportion"],
+                    "actual_draw_count": row["actual_draw_count"],
+                    "actual_draw_proportion": row["actual_draw_proportion"],
+                }
+            )
     return pd.DataFrame(rows)
 
 
