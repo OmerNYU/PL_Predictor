@@ -53,6 +53,7 @@ def save_phase1_outputs(
     class_metrics: pd.DataFrame | None = None,
     prediction_distribution: pd.DataFrame | None = None,
     probability_diagnostics: pd.DataFrame | None = None,
+    confidence_diagnostics: pd.DataFrame | None = None,
     outputs_dir: Path | str = "outputs",
 ) -> None:
     outputs_path = Path(outputs_dir)
@@ -69,6 +70,10 @@ def save_phase1_outputs(
     if probability_diagnostics is not None:
         probability_diagnostics.to_csv(
             outputs_path / "phase1_probability_diagnostics.csv", index=False
+        )
+    if confidence_diagnostics is not None:
+        confidence_diagnostics.to_csv(
+            outputs_path / "phase1_confidence_diagnostics.csv", index=False
         )
 
     phase1_metadata = {
@@ -99,6 +104,8 @@ def save_phase1_outputs(
         or probability_diagnostics is not None
     ):
         print("Phase 1 evaluation diagnostics saved to outputs/")
+    if confidence_diagnostics is not None:
+        print("Phase 1 confidence diagnostics saved to outputs/")
 
 
 def save_phase1_models(

@@ -18,6 +18,7 @@ from matchlens.evaluation import (
     baseline_most_frequent_class,
     baseline_random_by_train_freq,
     build_class_metrics_table,
+    build_confidence_diagnostics_table,
     build_experiment_results,
     build_phase1_experiment_specs,
     build_prediction_distribution_table,
@@ -254,6 +255,9 @@ def run_phase1_pipeline() -> None:
     probability_diagnostics = build_probability_diagnostics_table(
         phase1_evals, experiment_specs
     )
+    confidence_diagnostics = build_confidence_diagnostics_table(
+        phase1_evals, experiment_specs
+    )
     print_experiment_summary(experiment_results)
     print_all_confusion_matrices(phase1_evals, target_names=class_names)
 
@@ -277,6 +281,7 @@ def run_phase1_pipeline() -> None:
         class_metrics=class_metrics,
         prediction_distribution=prediction_distribution,
         probability_diagnostics=probability_diagnostics,
+        confidence_diagnostics=confidence_diagnostics,
     )
     save_phase1_models(
         best_model=best_model_spec["model"],

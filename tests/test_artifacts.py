@@ -161,6 +161,23 @@ def test_save_phase1_outputs_metadata_schema(
             "mean_entropy": [0.9],
         }
     )
+    confidence_diagnostics = pd.DataFrame(
+        {
+            "experiment_id": ["phase1_04", "phase1_04", "phase1_04"],
+            "model": ["Logistic Regression"] * 3,
+            "confidence_tier": ["High", "Medium", "Low"],
+            "count": [10, 5, 5],
+            "proportion": [0.5, 0.25, 0.25],
+            "accuracy": [0.6, 0.4, 0.3],
+            "mean_top_probability": [0.7, 0.5, 0.4],
+            "mean_probability_gap": [0.3, 0.1, 0.05],
+            "mean_entropy": [0.8, 1.0, 1.1],
+            "predicted_draw_count": [0, 0, 0],
+            "predicted_draw_proportion": [0.0, 0.0, 0.0],
+            "actual_draw_count": [1, 2, 2],
+            "actual_draw_proportion": [0.1, 0.4, 0.4],
+        }
+    )
 
     save_phase1_outputs(
         experiment_results=experiment_results,
@@ -174,6 +191,7 @@ def test_save_phase1_outputs_metadata_schema(
         class_metrics=class_metrics,
         prediction_distribution=prediction_distribution,
         probability_diagnostics=probability_diagnostics,
+        confidence_diagnostics=confidence_diagnostics,
         outputs_dir=tmp_path,
     )
 
@@ -183,6 +201,7 @@ def test_save_phase1_outputs_metadata_schema(
     assert (tmp_path / "phase1_class_metrics.csv").exists()
     assert (tmp_path / "phase1_prediction_distribution.csv").exists()
     assert (tmp_path / "phase1_probability_diagnostics.csv").exists()
+    assert (tmp_path / "phase1_confidence_diagnostics.csv").exists()
 
     with open(metadata_path, encoding="utf-8") as f:
         metadata = json.load(f)
