@@ -30,8 +30,11 @@ PL_Predictor/
 │       ├── data.py
 │       ├── features.py
 │       ├── evaluation.py
+│       ├── draw_experiments.py
 │       ├── artifacts.py
+│       ├── backtesting.py
 │       └── pipeline.py
+├── tests/
 ├── outputs/          # generated artifacts (gitignored contents)
 ├── models/           # serialized models (gitignored contents)
 └── README.md
@@ -131,6 +134,7 @@ Ensure `premier-league-matches.csv` sits next to `main.py` (path is relative to 
 - Feature set is small (no odds, league table, shots, Elo, etc.).
 - Primary reported metrics still use a single chronological 80/20 split; Phase 1 also runs a season walk-forward backtest diagnostic on the overall-form logistic setup (separate from model selection).
 - Phase 1 writes `phase1_experiment_results.csv`, `best_logistic_confusion_matrix.png`, and `phase1_run_metadata.json` under `outputs/` (gitignored), plus evaluation diagnostics: `phase1_class_metrics.csv`, `phase1_prediction_distribution.csv`, `phase1_probability_diagnostics.csv`, and `phase1_confidence_diagnostics.csv`. Season backtesting adds `phase1_backtest_results.csv` and `phase1_backtest_summary.json`. Best model, encoders, and metadata are saved under `models/` (gitignored).
+- An exploratory draw-focused track also writes `phase1_draw_experiment_results.csv` (class-weight and decision-rule variants on overall-form LR). This does **not** replace the official saved baseline model (`Logistic regression (overall form)` / `phase1_06`).
 
 ## Next Improvements
 

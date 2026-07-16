@@ -167,3 +167,18 @@ def save_phase1_backtest_outputs(
         f.write("\n")
 
     print("Phase 1 backtesting artifacts saved to outputs/")
+
+
+def save_phase1_draw_experiment_results(
+    draw_results: pd.DataFrame,
+    *,
+    outputs_dir: Path | str = "outputs",
+) -> Path:
+    """Save exploratory draw-focused experiment results (does not affect best model)."""
+    outputs_path = Path(outputs_dir)
+    outputs_path.mkdir(parents=True, exist_ok=True)
+
+    output_path = outputs_path / "phase1_draw_experiment_results.csv"
+    draw_results.to_csv(output_path, index=False)
+    print("Phase 1 draw-focused experiment results saved to outputs/")
+    return output_path
