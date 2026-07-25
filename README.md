@@ -142,3 +142,4 @@ Ensure `premier-league-matches.csv` sits next to `main.py` (path is relative to 
 - Additional models (e.g. gradient boosting) with the same chronological evaluation harness.
 - Use season backtesting more heavily for model comparison and hyperparameter choices.
 - CLI or config-driven experiments.
+- Ensure more accuracy and balanced predictions for the result: draw
